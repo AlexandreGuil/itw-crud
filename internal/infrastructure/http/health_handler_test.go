@@ -14,6 +14,7 @@ func newTestServer(readyFn func(context.Context) error) *httptest.Server {
 	cfg := ServerConfig{
 		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 		ReadinessProbe: readyFn,
+		BearerTokens:   map[string]string{},
 	}
 	srv := NewServer(cfg)
 	return httptest.NewServer(srv.handler)
