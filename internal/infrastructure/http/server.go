@@ -52,6 +52,7 @@ func NewServer(cfg ServerConfig) *Server {
 	}
 
 	r := chi.NewRouter()
+	r.Use(metricsMiddleware(cfg.Metrics))
 	if cfg.Metrics != nil {
 		r.Handle("/metrics", cfg.Metrics.Handler())
 	}
