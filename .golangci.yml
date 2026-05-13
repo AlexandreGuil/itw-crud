@@ -22,12 +22,11 @@ linters:
     - unconvert
     - unparam
     - whitespace
-
-linters-settings:
-  revive:
-    rules:
-      - name: unused-parameter
-        disabled: false
+  settings:
+    revive:
+      rules:
+        - name: unused-parameter
+          disabled: false
 
 issues:
   exclude-rules:
