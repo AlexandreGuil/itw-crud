@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -45,6 +46,26 @@ func run() int {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	logger.Info("starting itw-crud", "version", Version, "port", port)
+
+	tracingBootstrapCtx, tracingBootstrapCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	otelEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	if otelEndpoint != "" {
+		otelEndpoint = strings.TrimPrefix(otelEndpoint, "http://")
+		otelEndpoint = strings.TrimPrefix(otelEndpoint, "https://")
+	}
+	tracingShutdown, err := observability.InitTracing(tracingBootstrapCtx, otelEndpoint, "itw-crud", Version)
+	tracingBootstrapCancel()
+	if err != nil {
+		logger.Error("init tracing", "error", err)
+		return 1
+	}
+	defer func() {
+		shutdownCtx, c := context.WithTimeout(context.Background(), 5*time.Second)
+		defer c()
+		if err := tracingShutdown(shutdownCtx); err != nil {
+			logger.Error("tracing shutdown", "error", err)
+		}
+	}()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
