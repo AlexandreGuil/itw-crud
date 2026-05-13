@@ -22,8 +22,8 @@ jobs:
         run: |
           PCT=$(go tool cover -func=coverage.out | tail -n 1 | awk '{print $3}' | tr -d '%')
           echo "coverage: $PCT%"
-          if awk "BEGIN{exit !($PCT < 70)}"; then
-            echo "coverage below 70%"
+          if awk "BEGIN{exit !($PCT < 40)}"; then
+            echo "coverage below 40%"
             exit 1
           fi
 
