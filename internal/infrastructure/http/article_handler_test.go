@@ -112,7 +112,7 @@ func TestPostArticle_Success(t *testing.T) {
 		URL: "https://example.com/foo", TitleVO: "Hello",
 		ReaderTags: []string{"axis:ai", "source:rss", "veille-validee"},
 	})
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/articles", bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/articles", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer token-1")
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
@@ -132,8 +132,11 @@ func TestPostArticle_NoAuth_Returns401(t *testing.T) {
 	repo := newFakeRepo()
 	srv := newTestServerWithRepo(repo)
 	defer srv.Close()
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/articles", bytes.NewReader([]byte(`{}`)))
-	resp, _ := http.DefaultClient.Do(req)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/articles", bytes.NewReader([]byte(`{}`)))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status=%d", resp.StatusCode)
@@ -145,9 +148,12 @@ func TestGetArticle_Success(t *testing.T) {
 	_, _ = repo.CreateArticle(context.Background(), domain.CreateArticleInput{URL: "https://e/x", TitleVO: "T"})
 	srv := newTestServerWithRepo(repo)
 	defer srv.Close()
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/articles/"+b64("https://e/x"), nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/articles/"+b64("https://e/x"), nil)
 	req.Header.Set("Authorization", "Bearer token-1")
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d", resp.StatusCode)
@@ -165,9 +171,12 @@ func TestGetArticle_Success(t *testing.T) {
 func TestGetArticle_NotFound_Returns404(t *testing.T) {
 	srv := newTestServerWithRepo(newFakeRepo())
 	defer srv.Close()
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/articles/"+b64("https://nope"), nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/articles/"+b64("https://nope"), nil)
 	req.Header.Set("Authorization", "Bearer token-1")
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status=%d", resp.StatusCode)
@@ -181,11 +190,14 @@ func TestPatchTranslationState_HappyPath(t *testing.T) {
 	defer srv.Close()
 	titleFR := "Titre FR"
 	body, _ := json.Marshal(domain.PatchTranslationStateInput{TitleFR: &titleFR, MarkTranslated: true})
-	req, _ := http.NewRequest(http.MethodPatch, srv.URL+"/translation-state/"+b64("https://e/x"), bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPatch, srv.URL+"/translation-state/"+b64("https://e/x"), bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer token-1")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("If-Match", `"1"`)
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d", resp.StatusCode)
@@ -201,9 +213,12 @@ func TestPatchTranslationState_MissingIfMatch_Returns428(t *testing.T) {
 	srv := newTestServerWithRepo(repo)
 	defer srv.Close()
 	body, _ := json.Marshal(domain.PatchTranslationStateInput{})
-	req, _ := http.NewRequest(http.MethodPatch, srv.URL+"/translation-state/"+b64("https://e/x"), bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPatch, srv.URL+"/translation-state/"+b64("https://e/x"), bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer token-1")
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusPreconditionRequired {
 		t.Errorf("status=%d, want 428", resp.StatusCode)
@@ -218,10 +233,13 @@ func TestPatchTranslationState_StaleIfMatch_Returns412(t *testing.T) {
 	srv := newTestServerWithRepo(repo)
 	defer srv.Close()
 	body, _ := json.Marshal(domain.PatchTranslationStateInput{TitleFR: &titleFR})
-	req, _ := http.NewRequest(http.MethodPatch, srv.URL+"/translation-state/"+b64("https://e/x"), bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPatch, srv.URL+"/translation-state/"+b64("https://e/x"), bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer token-1")
 	req.Header.Set("If-Match", `"1"`)
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusPreconditionFailed {
 		t.Errorf("status=%d, want 412", resp.StatusCode)
@@ -233,9 +251,12 @@ func TestListOrphans_Success(t *testing.T) {
 	repo.orphans = []string{"https://e/orphan1", "https://e/orphan2"}
 	srv := newTestServerWithRepo(repo)
 	defer srv.Close()
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/articles/orphans?older_than=1h", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/articles/orphans?older_than=1h", nil)
 	req.Header.Set("Authorization", "Bearer token-1")
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d", resp.StatusCode)
