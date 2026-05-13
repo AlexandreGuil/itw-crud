@@ -1,0 +1,42 @@
+min_version = "2024.11.1"
+
+[tools]
+go = "1.23"
+
+[env]
+_.file = ".env"
+
+[tasks.fmt]
+description = "Format the code (gofmt + goimports)"
+run = """
+gofmt -w .
+goimports -w .
+"""
+
+[tasks.lint]
+description = "Run the linter (golangci-lint)"
+run = "golangci-lint run $@"
+
+[tasks.vet]
+description = "Run go vet"
+run = "go vet ./..."
+
+[tasks.test]
+description = "Run tests with race detector and coverage"
+run = "go test -race -cover -coverprofile=coverage.out ./... $@"
+
+[tasks."test:integration"]
+description = "Run integration tests (require Docker)"
+run = "go test -race -tags=integration ./tests/integration/... $@"
+
+[tasks.build]
+description = "Build the server binary into bin/server"
+run = """
+VERSION=$(git describe --tags --always 2>/dev/null || echo dev)
+go build -ldflags="-s -w -X main.Version=$VERSION" -o bin/server ./cmd/server
+"""
+
+[tasks.run]
+description = "Run the server locally"
+depends = ["build"]
+run = "./bin/server"
