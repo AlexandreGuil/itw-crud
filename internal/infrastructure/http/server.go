@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/AlexandreGuil/itw-crud/internal/domain"
+	"github.com/AlexandreGuil/itw-crud/internal/infrastructure/observability"
 )
 
 // Repository is the storage contract handlers depend on.
@@ -28,6 +29,7 @@ type Server struct {
 	readyFn func(context.Context) error
 	repo    Repository
 	tokens  map[string]string
+	metrics *observability.Metrics
 }
 
 type ServerConfig struct {
@@ -37,6 +39,7 @@ type ServerConfig struct {
 	BearerTokens      map[string]string
 	Repo              Repository
 	ReadHeaderTimeout time.Duration
+	Metrics           *observability.Metrics
 }
 
 func NewServer(cfg ServerConfig) *Server {
@@ -45,9 +48,13 @@ func NewServer(cfg ServerConfig) *Server {
 		readyFn: cfg.ReadinessProbe,
 		repo:    cfg.Repo,
 		tokens:  cfg.BearerTokens,
+		metrics: cfg.Metrics,
 	}
 
 	r := chi.NewRouter()
+	if cfg.Metrics != nil {
+		r.Handle("/metrics", cfg.Metrics.Handler())
+	}
 	r.Get("/healthz", s.handleHealthz)
 	r.Get("/readyz", s.handleReadyz)
 

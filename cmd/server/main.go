@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	httpsrv "github.com/AlexandreGuil/itw-crud/internal/infrastructure/http"
+	"github.com/AlexandreGuil/itw-crud/internal/infrastructure/observability"
 	"github.com/AlexandreGuil/itw-crud/internal/infrastructure/storage"
 )
 
@@ -58,6 +59,7 @@ func run() int {
 	defer pool.Close()
 
 	repo := storage.New(pool)
+	metrics := observability.NewMetrics()
 
 	srv := httpsrv.NewServer(httpsrv.ServerConfig{
 		Port:           port,
@@ -65,6 +67,7 @@ func run() int {
 		ReadinessProbe: repo.Ping,
 		BearerTokens:   tokens,
 		Repo:           repo,
+		Metrics:        metrics,
 	})
 
 	go func() {
