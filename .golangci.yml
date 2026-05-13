@@ -15,7 +15,6 @@ linters:
     - dupl
     - errorlint
     - gocritic
-    - goimports
     - gosec
     - misspell
     - noctx
@@ -35,3 +34,7 @@ linters:
         linters:
           - dupl
           - gosec
+
+formatters:
+  enable:
+    - goimports
