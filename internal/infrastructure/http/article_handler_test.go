@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	"github.com/AlexandreGuil/itw-crud/internal/domain"
+	"github.com/AlexandreGuil/itw-crud/internal/infrastructure/storage"
 )
 
 type fakeRepo struct {
@@ -28,19 +28,27 @@ func newFakeRepo() *fakeRepo {
 	return &fakeRepo{articles: map[string]*domain.Article{}}
 }
 
-func (f *fakeRepo) CreateArticle(_ context.Context, in domain.CreateArticleInput) (int, error) {
+// seedArticle inserts a minimal article (simulating ITW cron record_run).
+func (f *fakeRepo) seedArticle(url string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if _, ok := f.articles[in.URL]; ok {
-		return 0, errors.New("conflict")
+	f.articles[url] = &domain.Article{
+		URL: url, Title: "", FinalDecision: "", Version: 1,
+	}
+}
+
+func (f *fakeRepo) SetReaderPayload(_ context.Context, in domain.SetReaderPayloadInput) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a, ok := f.articles[in.URL]
+	if !ok {
+		return 0, storage.ErrNotFound
 	}
 	now := time.Now()
-	f.articles[in.URL] = &domain.Article{
-		URL: in.URL, TitleVO: in.TitleVO, Content: in.Content, Summary: in.Summary,
-		Axes: in.Axes, Tags: in.Tags, SourceURL: in.SourceURL,
-		ReaderTags: in.ReaderTags, ReaderPayloadPendingAt: &now, Version: 1,
-	}
-	return 1, nil
+	a.ReaderTags = in.ReaderTags
+	a.ReaderPayloadPendingAt = &now
+	a.Version++
+	return a.Version, nil
 }
 
 func (f *fakeRepo) GetArticleByURL(_ context.Context, url string) (*domain.Article, error) {
@@ -48,7 +56,7 @@ func (f *fakeRepo) GetArticleByURL(_ context.Context, url string) (*domain.Artic
 	defer f.mu.Unlock()
 	a, ok := f.articles[url]
 	if !ok {
-		return nil, errors.New("not found")
+		return nil, storage.ErrNotFound
 	}
 	return a, nil
 }
@@ -58,10 +66,10 @@ func (f *fakeRepo) PatchTranslationState(_ context.Context, url string, ifMatch 
 	defer f.mu.Unlock()
 	a, ok := f.articles[url]
 	if !ok {
-		return 0, errors.New("not found")
+		return 0, storage.ErrNotFound
 	}
 	if a.Version != ifMatch {
-		return 0, errors.New("version mismatch")
+		return 0, storage.ErrVersionMismatch
 	}
 	if in.TitleFR != nil {
 		a.TitleFR = in.TitleFR
@@ -106,10 +114,12 @@ func b64(url string) string {
 
 func TestPostArticle_Success(t *testing.T) {
 	repo := newFakeRepo()
+	// Seed the article (row created by ITW cron before itw-crud is called).
+	repo.seedArticle("https://example.com/foo")
 	srv := newTestServerWithRepo(repo)
 	defer srv.Close()
-	body, _ := json.Marshal(domain.CreateArticleInput{
-		URL: "https://example.com/foo", TitleVO: "Hello",
+	body, _ := json.Marshal(domain.SetReaderPayloadInput{
+		URL:        "https://example.com/foo",
 		ReaderTags: []string{"axis:ai", "source:rss", "veille-validee"},
 	})
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/articles", bytes.NewReader(body))
@@ -120,11 +130,32 @@ func TestPostArticle_Success(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
+	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
-	if etag := resp.Header.Get("ETag"); etag != `"1"` {
-		t.Errorf("etag=%q", etag)
+	if etag := resp.Header.Get("ETag"); etag != `"2"` {
+		t.Errorf("etag=%q, want \"2\"", etag)
+	}
+}
+
+func TestPostArticle_NotFound_Returns404(t *testing.T) {
+	repo := newFakeRepo()
+	srv := newTestServerWithRepo(repo)
+	defer srv.Close()
+	body, _ := json.Marshal(domain.SetReaderPayloadInput{
+		URL:        "https://example.com/unknown",
+		ReaderTags: []string{"veille-validee"},
+	})
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/articles", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token-1")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status=%d, want 404", resp.StatusCode)
 	}
 }
 
@@ -145,7 +176,8 @@ func TestPostArticle_NoAuth_Returns401(t *testing.T) {
 
 func TestGetArticle_Success(t *testing.T) {
 	repo := newFakeRepo()
-	_, _ = repo.CreateArticle(context.Background(), domain.CreateArticleInput{URL: "https://e/x", TitleVO: "T"})
+	repo.seedArticle("https://e/x")
+	repo.articles["https://e/x"].Title = "T"
 	srv := newTestServerWithRepo(repo)
 	defer srv.Close()
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/articles/"+b64("https://e/x"), nil)
@@ -163,8 +195,8 @@ func TestGetArticle_Success(t *testing.T) {
 	}
 	var got domain.Article
 	_ = json.NewDecoder(resp.Body).Decode(&got)
-	if got.TitleVO != "T" {
-		t.Errorf("title_vo=%q", got.TitleVO)
+	if got.Title != "T" {
+		t.Errorf("title=%q", got.Title)
 	}
 }
 
@@ -185,7 +217,7 @@ func TestGetArticle_NotFound_Returns404(t *testing.T) {
 
 func TestPatchTranslationState_HappyPath(t *testing.T) {
 	repo := newFakeRepo()
-	_, _ = repo.CreateArticle(context.Background(), domain.CreateArticleInput{URL: "https://e/x", TitleVO: "T"})
+	repo.seedArticle("https://e/x")
 	srv := newTestServerWithRepo(repo)
 	defer srv.Close()
 	titleFR := "Titre FR"
@@ -209,7 +241,7 @@ func TestPatchTranslationState_HappyPath(t *testing.T) {
 
 func TestPatchTranslationState_MissingIfMatch_Returns428(t *testing.T) {
 	repo := newFakeRepo()
-	_, _ = repo.CreateArticle(context.Background(), domain.CreateArticleInput{URL: "https://e/x", TitleVO: "T"})
+	repo.seedArticle("https://e/x")
 	srv := newTestServerWithRepo(repo)
 	defer srv.Close()
 	body, _ := json.Marshal(domain.PatchTranslationStateInput{})
@@ -227,7 +259,7 @@ func TestPatchTranslationState_MissingIfMatch_Returns428(t *testing.T) {
 
 func TestPatchTranslationState_StaleIfMatch_Returns412(t *testing.T) {
 	repo := newFakeRepo()
-	_, _ = repo.CreateArticle(context.Background(), domain.CreateArticleInput{URL: "https://e/x", TitleVO: "T"})
+	repo.seedArticle("https://e/x")
 	titleFR := "first"
 	_, _ = repo.PatchTranslationState(context.Background(), "https://e/x", 1, domain.PatchTranslationStateInput{TitleFR: &titleFR})
 	srv := newTestServerWithRepo(repo)

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -15,8 +14,8 @@ import (
 	"github.com/AlexandreGuil/itw-crud/internal/infrastructure/storage"
 )
 
-func (s *Server) handleCreateArticle(w http.ResponseWriter, r *http.Request) {
-	var in domain.CreateArticleInput
+func (s *Server) handleSetReaderPayload(w http.ResponseWriter, r *http.Request) {
+	var in domain.SetReaderPayloadInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
@@ -25,19 +24,19 @@ func (s *Server) handleCreateArticle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "url required")
 		return
 	}
-	version, err := s.repo.CreateArticle(r.Context(), in)
+	version, err := s.repo.SetReaderPayload(r.Context(), in)
 	if err != nil {
-		if errors.Is(err, storage.ErrConflict) {
-			writeError(w, http.StatusConflict, "article already exists")
+		if errors.Is(err, storage.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "article not found — must be ingested by ITW cron first")
 			return
 		}
-		s.logger.Error("create article", "error", err, "url", in.URL)
+		s.logger.Error("set reader payload", "error", err, "url", in.URL)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	w.Header().Set("ETag", `"`+strconv.Itoa(version)+`"`)
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{"url": in.URL, "version": version})
 }
 
@@ -49,7 +48,7 @@ func (s *Server) handleGetArticle(w http.ResponseWriter, r *http.Request) {
 	}
 	article, err := s.repo.GetArticleByURL(r.Context(), url)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) || strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "article not found")
 			return
 		}

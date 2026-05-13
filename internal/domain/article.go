@@ -3,44 +3,39 @@ package domain
 
 import "time"
 
-// Article is the full record stored in PG article_records table, as returned by GET /articles/{url}.
+// Article is a row from article_records as returned by GET /articles/{url}.
 type Article struct {
+	ArticleID     string     `json:"article_id"`
 	URL           string     `json:"url"`
 	MD5URL        string     `json:"md5_url"`
-	TitleVO       string     `json:"title_vo"`
-	Content       string     `json:"content"`
-	Summary       string     `json:"summary"`
-	Axes          []string   `json:"axes"`
-	Tags          []string   `json:"tags"`
-	SourceURL     string     `json:"source_url"`
-	FinalScore    *float64   `json:"final_score,omitempty"`
+	Title         string     `json:"title"`
 	FinalDecision string     `json:"final_decision"`
+	FinalScore    *float64   `json:"final_score,omitempty"`
 	IngestedAt    *time.Time `json:"ingested_at,omitempty"`
-	// S39 P4 translation state
+	Tags          *string    `json:"tags,omitempty"`
+	Source        *string    `json:"source,omitempty"`
+	Content       *string    `json:"content,omitempty"`
+	Summary       *string    `json:"summary,omitempty"`
 	TitleFR               *string    `json:"title_fr,omitempty"`
 	SummaryFR             *string    `json:"summary_fr,omitempty"`
 	TranslationModel      *string    `json:"translation_model,omitempty"`
 	TranslationTokensIn   *int       `json:"translation_tokens_input,omitempty"`
 	TranslationTokensOut  *int       `json:"translation_tokens_output,omitempty"`
-	TranslationDurationMs *int       `json:"translation_duration_ms,omitempty"`
+	TranslationDurationMs *int64     `json:"translation_duration_ms,omitempty"`
 	TranslatedAt          *time.Time `json:"translated_at,omitempty"`
 	ReadwiseID            *string    `json:"readwise_id,omitempty"`
 	ReaderPushedAt        *time.Time `json:"reader_pushed_at,omitempty"`
-	// S43 new — itw-crud
+	// S43 new
 	ReaderPayloadPendingAt *time.Time `json:"reader_payload_pending_at,omitempty"`
 	ReaderTags             []string   `json:"reader_tags"`
 	Version                int        `json:"version"`
 }
 
-// CreateArticleInput is the payload received on POST /articles.
-type CreateArticleInput struct {
+// SetReaderPayloadInput is the payload received on POST /articles.
+// Sets reader_payload_pending_at + reader_tags on an EXISTING row identified by URL.
+// (Rows are created by the ITW cron via record_run, not by itw-crud.)
+type SetReaderPayloadInput struct {
 	URL        string   `json:"url"`
-	TitleVO    string   `json:"title_vo"`
-	Content    string   `json:"content"`
-	Summary    string   `json:"summary"`
-	Axes       []string `json:"axes"`
-	Tags       []string `json:"tags"`
-	SourceURL  string   `json:"source_url"`
 	ReaderTags []string `json:"reader_tags"`
 }
 
@@ -52,7 +47,7 @@ type PatchTranslationStateInput struct {
 	TranslationModel      *string `json:"translation_model,omitempty"`
 	TranslationTokensIn   *int    `json:"translation_tokens_input,omitempty"`
 	TranslationTokensOut  *int    `json:"translation_tokens_output,omitempty"`
-	TranslationDurationMs *int    `json:"translation_duration_ms,omitempty"`
+	TranslationDurationMs *int64  `json:"translation_duration_ms,omitempty"`
 	MarkTranslated        bool    `json:"mark_translated,omitempty"`
 	ReadwiseID            *string `json:"readwise_id,omitempty"`
 	MarkPushedToReader    bool    `json:"mark_pushed_to_reader,omitempty"`

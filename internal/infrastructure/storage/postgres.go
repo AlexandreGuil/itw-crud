@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/AlexandreGuil/itw-crud/internal/domain"
@@ -19,7 +18,6 @@ import (
 
 // Sentinel errors returned by Repository methods.
 var ErrNotFound = errors.New("article not found")
-var ErrConflict = errors.New("article already exists")
 var ErrVersionMismatch = errors.New("version mismatch — stale ETag")
 
 // Repository wraps the pgx pool + provides typed CRUD methods over article_records.
@@ -43,33 +41,23 @@ func md5URL(url string) string {
 	return hex.EncodeToString(h[:])
 }
 
-// CreateArticle inserts a new article_records row with version=1 and
-// reader_payload_pending_at=NOW(). Returns ErrConflict on duplicate URL.
-func (r *Repository) CreateArticle(ctx context.Context, in domain.CreateArticleInput) (int, error) {
+// SetReaderPayload marks an existing article_records row as pending for
+// translation by setting reader_payload_pending_at + reader_tags.
+// The row must already exist (created by ITW cron record_run).
+func (r *Repository) SetReaderPayload(ctx context.Context, in domain.SetReaderPayloadInput) (int, error) {
 	const q = `
-INSERT INTO article_records (
-  md5_url, url, title, content, summary,
-  axes, tags, source_url,
-  reader_tags, reader_payload_pending_at, version, ingested_at
-) VALUES (
-  $1, $2, $3, $4, $5,
-  $6, $7, $8,
-  $9, NOW(), 1, NOW()
-)
+UPDATE article_records
+SET reader_payload_pending_at = NOW(), reader_tags = $1, version = version + 1
+WHERE md5_url = $2
 RETURNING version
 `
 	var version int
-	err := r.pool.QueryRow(ctx, q,
-		md5URL(in.URL), in.URL, in.TitleVO, in.Content, in.Summary,
-		in.Axes, in.Tags, in.SourceURL,
-		in.ReaderTags,
-	).Scan(&version)
+	err := r.pool.QueryRow(ctx, q, in.ReaderTags, md5URL(in.URL)).Scan(&version)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrNotFound
+	}
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return 0, ErrConflict
-		}
-		return 0, fmt.Errorf("create article: %w", err)
+		return 0, fmt.Errorf("set reader payload: %w", err)
 	}
 	return version, nil
 }
@@ -78,21 +66,22 @@ RETURNING version
 func (r *Repository) GetArticleByURL(ctx context.Context, url string) (*domain.Article, error) {
 	const q = `
 SELECT
-  url, md5_url, COALESCE(title, ''), COALESCE(content, ''), COALESCE(summary, ''),
-  COALESCE(axes, '{}'), COALESCE(tags, '{}'), COALESCE(source_url, ''),
-  final_score, COALESCE(final_decision, ''), ingested_at,
+  article_id, url, md5_url,
+  COALESCE(title, ''), COALESCE(final_decision, ''),
+  final_score, ingested_at, tags, source, content, summary,
   title_fr, summary_fr, translation_model,
   translation_tokens_input, translation_tokens_output, translation_duration_ms,
   translated_at, readwise_id, reader_pushed_at,
   reader_payload_pending_at, COALESCE(reader_tags, '{}'), version
 FROM article_records
 WHERE md5_url = $1
+LIMIT 1
 `
 	var a domain.Article
 	err := r.pool.QueryRow(ctx, q, md5URL(url)).Scan(
-		&a.URL, &a.MD5URL, &a.TitleVO, &a.Content, &a.Summary,
-		&a.Axes, &a.Tags, &a.SourceURL,
-		&a.FinalScore, &a.FinalDecision, &a.IngestedAt,
+		&a.ArticleID, &a.URL, &a.MD5URL,
+		&a.Title, &a.FinalDecision,
+		&a.FinalScore, &a.IngestedAt, &a.Tags, &a.Source, &a.Content, &a.Summary,
 		&a.TitleFR, &a.SummaryFR, &a.TranslationModel,
 		&a.TranslationTokensIn, &a.TranslationTokensOut, &a.TranslationDurationMs,
 		&a.TranslatedAt, &a.ReadwiseID, &a.ReaderPushedAt,

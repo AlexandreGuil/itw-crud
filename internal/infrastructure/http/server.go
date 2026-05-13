@@ -15,7 +15,7 @@ import (
 
 // Repository is the storage contract handlers depend on.
 type Repository interface {
-	CreateArticle(ctx context.Context, in domain.CreateArticleInput) (version int, err error)
+	SetReaderPayload(ctx context.Context, in domain.SetReaderPayloadInput) (version int, err error)
 	GetArticleByURL(ctx context.Context, url string) (*domain.Article, error)
 	PatchTranslationState(ctx context.Context, url string, ifMatch int, in domain.PatchTranslationStateInput) (newVersion int, err error)
 	ListOrphans(ctx context.Context, olderThan time.Duration) ([]string, error)
@@ -61,7 +61,7 @@ func NewServer(cfg ServerConfig) *Server {
 
 	r.Group(func(r chi.Router) {
 		r.Use(bearerAuth(cfg.Logger, cfg.BearerTokens))
-		r.Post("/articles", s.handleCreateArticle)
+		r.Post("/articles", s.handleSetReaderPayload)
 		r.Get("/articles/orphans", s.handleListOrphans)
 		r.Get("/articles/{url_b64}", s.handleGetArticle)
 		r.Patch("/translation-state/{url_b64}", s.handlePatchTranslationState)
