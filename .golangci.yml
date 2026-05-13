@@ -33,6 +33,8 @@ linters:
         linters:
           - dupl
           - gosec
+          - noctx
+          - errcheck
 
 formatters:
   enable:
