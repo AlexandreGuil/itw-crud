@@ -5,17 +5,17 @@ import "time"
 
 // Article is the full record stored in PG article_records table, as returned by GET /articles/{url}.
 type Article struct {
-	URL                    string     `json:"url"`
-	MD5URL                 string     `json:"md5_url"`
-	TitleVO                string     `json:"title_vo"`
-	Content                string     `json:"content"`
-	Summary                string     `json:"summary"`
-	Axes                   []string   `json:"axes"`
-	Tags                   []string   `json:"tags"`
-	SourceURL              string     `json:"source_url"`
-	FinalScore             *float64   `json:"final_score,omitempty"`
-	FinalDecision          string     `json:"final_decision"`
-	IngestedAt             *time.Time `json:"ingested_at,omitempty"`
+	URL           string     `json:"url"`
+	MD5URL        string     `json:"md5_url"`
+	TitleVO       string     `json:"title_vo"`
+	Content       string     `json:"content"`
+	Summary       string     `json:"summary"`
+	Axes          []string   `json:"axes"`
+	Tags          []string   `json:"tags"`
+	SourceURL     string     `json:"source_url"`
+	FinalScore    *float64   `json:"final_score,omitempty"`
+	FinalDecision string     `json:"final_decision"`
+	IngestedAt    *time.Time `json:"ingested_at,omitempty"`
 	// S39 P4 translation state
 	TitleFR               *string    `json:"title_fr,omitempty"`
 	SummaryFR             *string    `json:"summary_fr,omitempty"`
