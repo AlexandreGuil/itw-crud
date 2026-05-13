@@ -1,5 +1,5 @@
 bin/
-server
+/server
 coverage.out
 coverage.html
 *.test
