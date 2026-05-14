@@ -318,6 +318,88 @@ func TestPatchTranslationState_MarkPushedToReader(t *testing.T) {
 	}
 }
 
+func TestWriteTranslationState_UpdatesArticleByMD5(t *testing.T) {
+	pool, cleanup := startTestPG(t)
+	defer cleanup()
+
+	repo := storage.New(pool)
+	ctx := context.Background()
+
+	// Bootstrap article via UpsertArticle
+	articleMD5 := md5URL("https://example.com/translated")
+	_, err := repo.UpsertArticle(ctx, domain.UpsertArticleInput{
+		URL: "https://example.com/translated", MD5URL: articleMD5,
+		ArticleID: "art-trans-001", RunID: "test-run-1",
+		Title: "Hello", FinalDecision: "accepted",
+		Axes: []string{}, ReaderTags: []string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	titleFR := "Bonjour"
+	summaryFR := "Résumé FR"
+	model := "gemma4:31b-cloud"
+	tokensIn := 100
+	tokensOut := 50
+	durationMs := int64(4500)
+	err = repo.WriteTranslationState(ctx, domain.TranslationResponseInput{
+		RequestID:             "itw-tech:" + articleMD5,
+		Status:                "ok",
+		SourceLanguage:        "en",
+		TargetLanguage:        "fr",
+		TitleFR:               &titleFR,
+		SummaryFR:             &summaryFR,
+		TranslationModel:      &model,
+		TranslationTokensIn:   &tokensIn,
+		TranslationTokensOut:  &tokensOut,
+		TranslationDurationMs: &durationMs,
+	})
+	if err != nil {
+		t.Fatalf("WriteTranslationState: %v", err)
+	}
+
+	got, _ := repo.GetArticleByURL(ctx, "https://example.com/translated")
+	if got.TitleFR == nil || *got.TitleFR != "Bonjour" {
+		t.Errorf("title_fr=%v, want Bonjour", got.TitleFR)
+	}
+	if got.TranslatedAt == nil {
+		t.Error("translated_at should be set")
+	}
+}
+
+func TestWriteTranslationState_SkipsIfStatusNotOk(t *testing.T) {
+	pool, cleanup := startTestPG(t)
+	defer cleanup()
+
+	repo := storage.New(pool)
+	ctx := context.Background()
+
+	articleMD5 := md5URL("https://example.com/skipped")
+	if _, err := repo.UpsertArticle(ctx, domain.UpsertArticleInput{
+		URL: "https://example.com/skipped", MD5URL: articleMD5,
+		ArticleID: "art-skip-001", RunID: "test-run-1",
+		Title: "Skip Me", FinalDecision: "accepted",
+		Axes: []string{}, ReaderTags: []string{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// status=skipped_french — no update expected, no error
+	err := repo.WriteTranslationState(ctx, domain.TranslationResponseInput{
+		RequestID: "itw-tech:" + articleMD5,
+		Status:    "skipped_french",
+	})
+	if err != nil {
+		t.Fatalf("WriteTranslationState skipped_french: %v", err)
+	}
+
+	got, _ := repo.GetArticleByURL(ctx, "https://example.com/skipped")
+	if got.TranslatedAt != nil {
+		t.Error("translated_at should NOT be set for skipped_french")
+	}
+}
+
 func TestListOrphans_FiltersByPendingNotTranslated(t *testing.T) {
 	pool, cleanup := startTestPG(t)
 	defer cleanup()

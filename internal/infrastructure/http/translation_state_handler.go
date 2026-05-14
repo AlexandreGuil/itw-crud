@@ -11,6 +11,33 @@ import (
 	"github.com/AlexandreGuil/itw-crud/internal/infrastructure/storage"
 )
 
+// handleWriteTranslationState (S44 Phase 2 new endpoint).
+// Body: TranslationResponseInput from translator-agent v3.0 via RabbitmqSource.
+// request_id parsed for md5_url, UPDATE by md5_url.
+func (s *Server) handleWriteTranslationState(w http.ResponseWriter, r *http.Request) {
+	var in domain.TranslationResponseInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if in.RequestID == "" {
+		writeError(w, http.StatusBadRequest, "request_id required")
+		return
+	}
+
+	if err := s.repo.WriteTranslationState(r.Context(), in); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "article not found for request_id")
+			return
+		}
+		s.logger.Error("write translation state", "error", err, "request_id", in.RequestID)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handlePatchTranslationState(w http.ResponseWriter, r *http.Request) {
 	ifMatchHeader := r.Header.Get("If-Match")
 	if ifMatchHeader == "" {

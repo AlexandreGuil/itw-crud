@@ -3,12 +3,16 @@ package http
 import (
 	"bytes"
 	"context"
+	"crypto/md5" //nolint:gosec
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -101,6 +105,43 @@ func (f *fakeRepo) ListOrphans(_ context.Context, _ time.Duration) ([]string, er
 }
 
 func (f *fakeRepo) Ping(_ context.Context) error { return f.pingErr }
+
+// md5sum returns hex-encoded MD5 of s — mirrors storage.md5URL for test use.
+func md5sum(s string) string {
+	h := md5.Sum([]byte(s)) //nolint:gosec
+	return hex.EncodeToString(h[:])
+}
+
+func (f *fakeRepo) WriteTranslationState(_ context.Context, in domain.TranslationResponseInput) error {
+	if in.RequestID == "" {
+		return errors.New("invalid request_id")
+	}
+	parts := strings.SplitN(in.RequestID, ":", 2)
+	if len(parts) != 2 || parts[1] == "" {
+		return errors.New("invalid request_id format")
+	}
+	if in.Status != "ok" {
+		return nil
+	}
+	md5hex := parts[1]
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for url, a := range f.articles {
+		if md5sum(url) == md5hex {
+			if in.TitleFR != nil {
+				a.TitleFR = in.TitleFR
+			}
+			if in.SummaryFR != nil {
+				a.SummaryFR = in.SummaryFR
+			}
+			now := time.Now()
+			a.TranslatedAt = &now
+			a.Version++
+			return nil
+		}
+	}
+	return storage.ErrNotFound
+}
 
 func newTestServerWithRepo(repo Repository) *httptest.Server {
 	cfg := ServerConfig{
@@ -357,5 +398,101 @@ func TestListOrphans_Success(t *testing.T) {
 	_ = json.NewDecoder(resp.Body).Decode(&got)
 	if len(got.Urls) != 2 {
 		t.Errorf("urls=%v", got.Urls)
+	}
+}
+
+func TestPostTranslationState_HappyPath_Returns204(t *testing.T) {
+	repo := newFakeRepo()
+	repo.seedArticle("https://e/translated")
+	srv := newTestServerWithRepo(repo)
+	defer srv.Close()
+
+	titleFR := "Titre FR"
+	summaryFR := "Résumé FR"
+	body, _ := json.Marshal(domain.TranslationResponseInput{
+		RequestID:      "itw-tech:" + md5sum("https://e/translated"),
+		Status:         "ok",
+		SourceLanguage: "en",
+		TargetLanguage: "fr",
+		TitleFR:        &titleFR,
+		SummaryFR:      &summaryFR,
+	})
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/translation-state", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token-1")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status=%d, want 204", resp.StatusCode)
+	}
+}
+
+func TestPostTranslationState_MissingRequestID_Returns400(t *testing.T) {
+	repo := newFakeRepo()
+	srv := newTestServerWithRepo(repo)
+	defer srv.Close()
+
+	body, _ := json.Marshal(domain.TranslationResponseInput{
+		Status: "ok",
+	})
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/translation-state", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token-1")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status=%d, want 400", resp.StatusCode)
+	}
+}
+
+func TestPostTranslationState_ArticleNotFound_Returns404(t *testing.T) {
+	repo := newFakeRepo()
+	srv := newTestServerWithRepo(repo)
+	defer srv.Close()
+
+	body, _ := json.Marshal(domain.TranslationResponseInput{
+		RequestID: "itw-tech:" + md5sum("https://nope/missing"),
+		Status:    "ok",
+	})
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/translation-state", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token-1")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status=%d, want 404", resp.StatusCode)
+	}
+}
+
+func TestPostTranslationState_SkippedStatus_Returns204(t *testing.T) {
+	repo := newFakeRepo()
+	repo.seedArticle("https://e/skipped")
+	srv := newTestServerWithRepo(repo)
+	defer srv.Close()
+
+	body, _ := json.Marshal(domain.TranslationResponseInput{
+		RequestID: "itw-tech:" + md5sum("https://e/skipped"),
+		Status:    "skipped_french",
+	})
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/translation-state", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token-1")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	// skipped_french is no-op but still 204 — not an error
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("status=%d, want 204", resp.StatusCode)
 	}
 }

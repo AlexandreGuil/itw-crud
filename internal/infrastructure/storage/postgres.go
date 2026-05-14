@@ -199,6 +199,46 @@ RETURNING version
 	return newVersion, nil
 }
 
+// WriteTranslationState UPDATE article row matched by md5_url extracted from request_id.
+// request_id format: "<source>:<md5_url_hex>" — split on ":" take index 1.
+// Idempotent. If status != "ok", no-op (skipped/failed translation).
+func (r *Repository) WriteTranslationState(ctx context.Context, in domain.TranslationResponseInput) error {
+	parts := strings.SplitN(in.RequestID, ":", 2)
+	if len(parts) != 2 || parts[1] == "" {
+		return fmt.Errorf("invalid request_id %q: expected <source>:<md5_url>", in.RequestID)
+	}
+	if in.Status != "ok" {
+		return nil
+	}
+	md5 := parts[1]
+
+	const q = `
+UPDATE article_records
+SET title_fr = $1, summary_fr = $2,
+    translation_model = $3,
+    translation_tokens_input = $4,
+    translation_tokens_output = $5,
+    translation_duration_ms = $6,
+    translated_at = COALESCE(translated_at, NOW()),
+    version = version + 1
+WHERE md5_url = $7
+RETURNING version
+`
+	var version int
+	err := r.pool.QueryRow(ctx, q,
+		in.TitleFR, in.SummaryFR, in.TranslationModel,
+		in.TranslationTokensIn, in.TranslationTokensOut, in.TranslationDurationMs,
+		md5,
+	).Scan(&version)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("write translation state: %w", err)
+	}
+	return nil
+}
+
 // ListOrphans returns URLs of articles where reader_payload_pending_at IS NOT NULL,
 // translated_at IS NULL, and the pending timestamp is older than olderThan.
 // Pass 0 to return all pending-not-translated regardless of age.

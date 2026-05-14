@@ -18,6 +18,7 @@ type Repository interface {
 	UpsertArticle(ctx context.Context, in domain.UpsertArticleInput) (version int, err error)
 	GetArticleByURL(ctx context.Context, url string) (*domain.Article, error)
 	PatchTranslationState(ctx context.Context, url string, ifMatch int, in domain.PatchTranslationStateInput) (newVersion int, err error)
+	WriteTranslationState(ctx context.Context, in domain.TranslationResponseInput) error
 	ListOrphans(ctx context.Context, olderThan time.Duration) ([]string, error)
 	Ping(ctx context.Context) error
 }
@@ -64,7 +65,8 @@ func NewServer(cfg ServerConfig) *Server {
 		r.Post("/articles", s.handleUpsertArticle)
 		r.Get("/articles/orphans", s.handleListOrphans)
 		r.Get("/articles/{url_b64}", s.handleGetArticle)
-		r.Patch("/translation-state/{url_b64}", s.handlePatchTranslationState)
+		r.Post("/translation-state", s.handleWriteTranslationState)            // S44 Phase 2 new endpoint
+		r.Patch("/translation-state/{url_b64}", s.handlePatchTranslationState) // backward compat
 	})
 
 	s.handler = r
