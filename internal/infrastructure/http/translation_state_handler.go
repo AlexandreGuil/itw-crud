@@ -14,11 +14,24 @@ import (
 // handleWriteTranslationState (S44 Phase 2 new endpoint).
 // Body: TranslationResponseInput from translator-agent v3.0 via RabbitmqSource.
 // request_id parsed for md5_url, UPDATE by md5_url.
+// Supports both plain JSON (Content-Type: application/json) and CloudEvent structured mode
+// (Content-Type: application/cloudevents+json) sent by Knative RabbitmqSource.
 func (s *Server) handleWriteTranslationState(w http.ResponseWriter, r *http.Request) {
 	var in domain.TranslationResponseInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json body")
+
+	if data, err := cloudEventData(r); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid cloudevent body")
 		return
+	} else if data != nil {
+		if err := json.Unmarshal(data, &in); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid cloudevent data field")
+			return
+		}
+	} else {
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid json body")
+			return
+		}
 	}
 	if in.RequestID == "" {
 		writeError(w, http.StatusBadRequest, "request_id required")

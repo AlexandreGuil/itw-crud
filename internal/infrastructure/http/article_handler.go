@@ -16,11 +16,24 @@ import (
 
 // handleUpsertArticle reads UpsertArticleInput JSON body, calls repo.UpsertArticle,
 // returns 200 + ETag on success.
+// Supports both plain JSON (Content-Type: application/json) and CloudEvent structured mode
+// (Content-Type: application/cloudevents+json) sent by Knative RabbitmqSource.
 func (s *Server) handleUpsertArticle(w http.ResponseWriter, r *http.Request) {
 	var in domain.UpsertArticleInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json body")
+
+	if data, err := cloudEventData(r); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid cloudevent body")
 		return
+	} else if data != nil {
+		if err := json.Unmarshal(data, &in); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid cloudevent data field")
+			return
+		}
+	} else {
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid json body")
+			return
+		}
 	}
 	if in.URL == "" {
 		writeError(w, http.StatusBadRequest, "url required")
