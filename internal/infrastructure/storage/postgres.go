@@ -41,23 +41,50 @@ func md5URL(url string) string {
 	return hex.EncodeToString(h[:])
 }
 
-// SetReaderPayload marks an existing article_records row as pending for
-// translation by setting reader_payload_pending_at + reader_tags.
-// The row must already exist (created by ITW cron record_run).
-func (r *Repository) SetReaderPayload(ctx context.Context, in domain.SetReaderPayloadInput) (int, error) {
+// UpsertArticle does INSERT ON CONFLICT (md5_url) DO UPDATE.
+// Sets reader_payload_pending_at=NOW() on insert (article entering translation pipeline).
+// Increments version on update. Idempotent.
+func (r *Repository) UpsertArticle(ctx context.Context, in domain.UpsertArticleInput) (int, error) {
 	const q = `
-UPDATE article_records
-SET reader_payload_pending_at = NOW(), reader_tags = $1, version = version + 1
-WHERE md5_url = $2
+INSERT INTO article_records (
+  md5_url, url, article_id, run_id, title, content, summary,
+  tags, source, source_url, author, published_date, word_count,
+  axes, reader_tags, final_decision, final_score, decisions,
+  ingested_at, reader_payload_pending_at, version
+) VALUES (
+  $1, $2, $3, $4, $5, $6, $7,
+  $8, $9, $10, $11, $12, $13,
+  $14, $15, $16, $17, COALESCE($18, '[]'::jsonb)::jsonb,
+  COALESCE($19, NOW()), NOW(), 1
+)
+ON CONFLICT (md5_url) DO UPDATE SET
+  title = EXCLUDED.title,
+  content = EXCLUDED.content,
+  summary = EXCLUDED.summary,
+  tags = EXCLUDED.tags,
+  source = EXCLUDED.source,
+  source_url = EXCLUDED.source_url,
+  axes = EXCLUDED.axes,
+  reader_tags = EXCLUDED.reader_tags,
+  final_decision = EXCLUDED.final_decision,
+  final_score = EXCLUDED.final_score,
+  reader_payload_pending_at = NOW(),
+  version = article_records.version + 1
 RETURNING version
 `
-	var version int
-	err := r.pool.QueryRow(ctx, q, in.ReaderTags, md5URL(in.URL)).Scan(&version)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, ErrNotFound
+	var decisionsArg interface{}
+	if in.Decisions != "" {
+		decisionsArg = in.Decisions
 	}
+	var version int
+	err := r.pool.QueryRow(ctx, q,
+		in.MD5URL, in.URL, in.ArticleID, in.RunID, in.Title, in.Content, in.Summary,
+		in.Tags, in.Source, in.SourceURL, in.Author, in.PublishedDate, in.WordCount,
+		in.Axes, in.ReaderTags, in.FinalDecision, in.FinalScore, decisionsArg,
+		in.IngestedAt,
+	).Scan(&version)
 	if err != nil {
-		return 0, fmt.Errorf("set reader payload: %w", err)
+		return 0, fmt.Errorf("upsert article: %w", err)
 	}
 	return version, nil
 }

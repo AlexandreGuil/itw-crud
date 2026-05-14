@@ -19,8 +19,8 @@ import (
 	"github.com/AlexandreGuil/itw-crud/internal/infrastructure/storage"
 )
 
-// md5Hex mirrors storage.md5URL for test setup (unexported in storage, duplicated here).
-func md5Hex(s string) string {
+// md5URL mirrors storage.md5URL for test setup (unexported in storage, duplicated here).
+func md5URL(s string) string {
 	h := md5.Sum([]byte(s)) //nolint:gosec
 	return hex.EncodeToString(h[:])
 }
@@ -56,6 +56,7 @@ func startTestPG(t *testing.T) (*pgxpool.Pool, func()) {
 	}
 
 	// Bootstrap article_records table matching actual prod schema (relevant columns).
+	// Includes S44 columns: source_url + axes.
 	bootstrapSQL := `
 CREATE TABLE IF NOT EXISTS pipeline_runs (
   run_id TEXT PRIMARY KEY,
@@ -78,6 +79,7 @@ CREATE TABLE article_records (
   tags TEXT,
   author TEXT,
   source TEXT,
+  source_url TEXT NOT NULL DEFAULT '',
   published_date TIMESTAMPTZ,
   word_count INT NOT NULL DEFAULT 0,
   content TEXT,
@@ -103,7 +105,7 @@ CREATE TABLE article_records (
 	}
 
 	// Apply S43 migration (same SQL as migration file).
-	migration := `
+	migrationS43 := `
 ALTER TABLE article_records
   ADD COLUMN IF NOT EXISTS reader_payload_pending_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS reader_tags TEXT[],
@@ -113,7 +115,18 @@ CREATE INDEX IF NOT EXISTS idx_article_records_orphans
   ON article_records (reader_payload_pending_at)
   WHERE reader_payload_pending_at IS NOT NULL AND translated_at IS NULL;
 `
-	if _, err := pool.Exec(ctx, migration); err != nil {
+	if _, err := pool.Exec(ctx, migrationS43); err != nil {
+		pool.Close()
+		cleanup()
+		t.Fatal(err)
+	}
+
+	// Apply S44 migration — axes column (source_url already in bootstrap above).
+	migrationS44 := `
+ALTER TABLE article_records
+  ADD COLUMN IF NOT EXISTS axes TEXT[] NOT NULL DEFAULT '{}';
+`
+	if _, err := pool.Exec(ctx, migrationS44); err != nil {
 		pool.Close()
 		cleanup()
 		t.Fatal(err)
@@ -127,7 +140,7 @@ func insertMinimalRow(t *testing.T, pool *pgxpool.Pool, url string) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(),
 		`INSERT INTO article_records (run_id, url, md5_url, ingested_at) VALUES ($1, $2, $3, NOW())`,
-		"test-run-1", url, md5Hex(url),
+		"test-run-1", url, md5URL(url),
 	)
 	if err != nil {
 		t.Fatalf("insertMinimalRow: %v", err)
@@ -144,57 +157,85 @@ func TestPostgresPingOK(t *testing.T) {
 	}
 }
 
-func TestSetReaderPayload_UpdatesExistingRow(t *testing.T) {
+func TestUpsertArticle_InsertsIfNotExists(t *testing.T) {
 	pool, cleanup := startTestPG(t)
 	defer cleanup()
 
 	repo := storage.New(pool)
 	ctx := context.Background()
 
-	url := "https://example.com/foo"
-	insertMinimalRow(t, pool, url)
-
-	input := domain.SetReaderPayloadInput{
-		URL:        url,
-		ReaderTags: []string{"axis:ai-ml-data", "source:rss", "veille-validee"},
+	in := domain.UpsertArticleInput{
+		URL:           "https://example.com/upsert-new",
+		MD5URL:        md5URL("https://example.com/upsert-new"),
+		ArticleID:     "art-new-001",
+		RunID:         "test-run-1",
+		Title:         "Original Title",
+		Content:       "lorem ipsum",
+		Summary:       "short",
+		Tags:          "tag1,tag2",
+		Source:        "https://example.com/feed",
+		Axes:          []string{"ai-ml-data"},
+		ReaderTags:    []string{"axis:ai-ml-data", "source:rss", "veille-validee"},
+		FinalDecision: "accepted",
 	}
 
-	version, err := repo.SetReaderPayload(ctx, input)
+	version, err := repo.UpsertArticle(ctx, in)
 	if err != nil {
-		t.Fatalf("SetReaderPayload: %v", err)
+		t.Fatalf("UpsertArticle: %v", err)
 	}
-	if version != 2 {
-		t.Errorf("version=%d, want 2", version)
+	if version != 1 {
+		t.Errorf("version=%d, want 1", version)
 	}
 
-	got, err := repo.GetArticleByURL(ctx, url)
+	got, err := repo.GetArticleByURL(ctx, in.URL)
 	if err != nil {
 		t.Fatalf("GetArticleByURL: %v", err)
 	}
-	if got.Version != 2 {
-		t.Errorf("version=%d", got.Version)
+	if got.Title != "Original Title" {
+		t.Errorf("title=%q, want %q", got.Title, "Original Title")
 	}
 	if got.ReaderPayloadPendingAt == nil {
-		t.Error("reader_payload_pending_at should be set")
+		t.Error("reader_payload_pending_at should be set on insert")
 	}
 	if len(got.ReaderTags) != 3 {
-		t.Errorf("reader_tags len=%d", len(got.ReaderTags))
+		t.Errorf("reader_tags len=%d, want 3", len(got.ReaderTags))
 	}
 }
 
-func TestSetReaderPayload_NotFound_ReturnsErrNotFound(t *testing.T) {
+func TestUpsertArticle_UpdatesIfExists(t *testing.T) {
 	pool, cleanup := startTestPG(t)
 	defer cleanup()
 
 	repo := storage.New(pool)
 	ctx := context.Background()
 
-	_, err := repo.SetReaderPayload(ctx, domain.SetReaderPayloadInput{
-		URL:        "https://example.com/does-not-exist",
-		ReaderTags: []string{"veille-validee"},
-	})
-	if !errors.Is(err, storage.ErrNotFound) {
-		t.Errorf("err=%v, want ErrNotFound", err)
+	in := domain.UpsertArticleInput{
+		URL:           "https://example.com/upsert-update",
+		MD5URL:        md5URL("https://example.com/upsert-update"),
+		ArticleID:     "art-upd-001",
+		RunID:         "test-run-1",
+		Title:         "First",
+		FinalDecision: "accepted",
+		Axes:          []string{"ai-ml-data"},
+		ReaderTags:    []string{"veille-validee"},
+	}
+	v1, err := repo.UpsertArticle(ctx, in)
+	if err != nil {
+		t.Fatalf("UpsertArticle first: %v", err)
+	}
+
+	in.Title = "Updated"
+	v2, err := repo.UpsertArticle(ctx, in)
+	if err != nil {
+		t.Fatalf("UpsertArticle second: %v", err)
+	}
+	if v2 != v1+1 {
+		t.Errorf("version=%d, want %d (v1+1)", v2, v1+1)
+	}
+
+	got, _ := repo.GetArticleByURL(ctx, in.URL)
+	if got.Title != "Updated" {
+		t.Errorf("title=%q, want %q", got.Title, "Updated")
 	}
 }
 
@@ -283,18 +324,27 @@ func TestListOrphans_FiltersByPendingNotTranslated(t *testing.T) {
 	repo := storage.New(pool)
 	ctx := context.Background()
 
-	// Article 1: pending + not translated → ORPHAN
+	// Article 1: pending (via UPSERT) + not translated → ORPHAN
 	url1 := "https://e/orphan"
-	insertMinimalRow(t, pool, url1)
-	_, _ = repo.SetReaderPayload(ctx, domain.SetReaderPayloadInput{URL: url1, ReaderTags: []string{"veille-validee"}})
+	_, _ = repo.UpsertArticle(ctx, domain.UpsertArticleInput{
+		URL: url1, MD5URL: md5URL(url1),
+		ArticleID: "art-orphan-001", RunID: "test-run-1",
+		FinalDecision: "accepted",
+		Axes:          []string{},
+		ReaderTags:    []string{"veille-validee"},
+	})
 
-	// Article 2: pending + translated → NOT orphan
+	// Article 2: pending (via UPSERT) + translated → NOT orphan
 	url2 := "https://e/done"
-	insertMinimalRow(t, pool, url2)
-	_, _ = repo.SetReaderPayload(ctx, domain.SetReaderPayloadInput{URL: url2, ReaderTags: []string{"veille-validee"}})
+	v1, _ := repo.UpsertArticle(ctx, domain.UpsertArticleInput{
+		URL: url2, MD5URL: md5URL(url2),
+		ArticleID: "art-done-001", RunID: "test-run-1",
+		FinalDecision: "accepted",
+		Axes:          []string{},
+		ReaderTags:    []string{"veille-validee"},
+	})
 	titleFR := "FR"
-	// version is 2 after SetReaderPayload (started at 1, incremented once)
-	_, _ = repo.PatchTranslationState(ctx, url2, 2, domain.PatchTranslationStateInput{
+	_, _ = repo.PatchTranslationState(ctx, url2, v1, domain.PatchTranslationStateInput{
 		TitleFR: &titleFR, MarkTranslated: true,
 	})
 

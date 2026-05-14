@@ -3,6 +3,31 @@ package domain
 
 import "time"
 
+// UpsertArticleInput is the payload received on POST /articles (S44 Phase 2).
+// Full article payload from AMQP RabbitmqSource (cron Python publish to itw.articles exchange).
+// Idempotent UPSERT keyed by md5_url.
+type UpsertArticleInput struct {
+	URL           string     `json:"url"`
+	MD5URL        string     `json:"md5_url"`
+	ArticleID     string     `json:"article_id"`
+	RunID         string     `json:"run_id"`
+	Title         string     `json:"title"`
+	Content       string     `json:"content"`
+	Summary       string     `json:"summary"`
+	Tags          string     `json:"tags"`
+	Source        string     `json:"source"`
+	SourceURL     string     `json:"source_url"`
+	Author        string     `json:"author,omitempty"`
+	PublishedDate *time.Time `json:"published_date,omitempty"`
+	WordCount     int        `json:"word_count,omitempty"`
+	Axes          []string   `json:"axes"`
+	ReaderTags    []string   `json:"reader_tags"`
+	FinalDecision string     `json:"final_decision"`
+	FinalScore    *float64   `json:"final_score,omitempty"`
+	Decisions     string     `json:"decisions,omitempty"` // JSONB serialized
+	IngestedAt    *time.Time `json:"ingested_at,omitempty"`
+}
+
 // Article is a row from article_records as returned by GET /articles/{url}.
 type Article struct {
 	ArticleID     string     `json:"article_id"`
@@ -29,14 +54,6 @@ type Article struct {
 	ReaderPayloadPendingAt *time.Time `json:"reader_payload_pending_at,omitempty"`
 	ReaderTags             []string   `json:"reader_tags"`
 	Version                int        `json:"version"`
-}
-
-// SetReaderPayloadInput is the payload received on POST /articles.
-// Sets reader_payload_pending_at + reader_tags on an EXISTING row identified by URL.
-// (Rows are created by the ITW cron via record_run, not by itw-crud.)
-type SetReaderPayloadInput struct {
-	URL        string   `json:"url"`
-	ReaderTags []string `json:"reader_tags"`
 }
 
 // PatchTranslationStateInput is the payload received on PATCH /translation-state/{url}.

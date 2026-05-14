@@ -14,8 +14,10 @@ import (
 	"github.com/AlexandreGuil/itw-crud/internal/infrastructure/storage"
 )
 
-func (s *Server) handleSetReaderPayload(w http.ResponseWriter, r *http.Request) {
-	var in domain.SetReaderPayloadInput
+// handleUpsertArticle reads UpsertArticleInput JSON body, calls repo.UpsertArticle,
+// returns 200 + ETag on success.
+func (s *Server) handleUpsertArticle(w http.ResponseWriter, r *http.Request) {
+	var in domain.UpsertArticleInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
@@ -24,16 +26,26 @@ func (s *Server) handleSetReaderPayload(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "url required")
 		return
 	}
-	version, err := s.repo.SetReaderPayload(r.Context(), in)
+	if in.MD5URL == "" {
+		writeError(w, http.StatusBadRequest, "md5_url required")
+		return
+	}
+	if in.ArticleID == "" {
+		writeError(w, http.StatusBadRequest, "article_id required")
+		return
+	}
+	if in.RunID == "" {
+		writeError(w, http.StatusBadRequest, "run_id required")
+		return
+	}
+
+	version, err := s.repo.UpsertArticle(r.Context(), in)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "article not found — must be ingested by ITW cron first")
-			return
-		}
-		s.logger.Error("set reader payload", "error", err, "url", in.URL)
+		s.logger.Error("upsert article", "error", err, "url", in.URL)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+
 	w.Header().Set("ETag", `"`+strconv.Itoa(version)+`"`)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

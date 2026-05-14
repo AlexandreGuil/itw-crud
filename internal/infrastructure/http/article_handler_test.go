@@ -37,18 +37,22 @@ func (f *fakeRepo) seedArticle(url string) {
 	}
 }
 
-func (f *fakeRepo) SetReaderPayload(_ context.Context, in domain.SetReaderPayloadInput) (int, error) {
+func (f *fakeRepo) UpsertArticle(_ context.Context, in domain.UpsertArticleInput) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	a, ok := f.articles[in.URL]
-	if !ok {
-		return 0, storage.ErrNotFound
-	}
 	now := time.Now()
-	a.ReaderTags = in.ReaderTags
-	a.ReaderPayloadPendingAt = &now
-	a.Version++
-	return a.Version, nil
+	if existing, ok := f.articles[in.URL]; ok {
+		existing.Title = in.Title
+		existing.Version++
+		existing.ReaderPayloadPendingAt = &now
+		return existing.Version, nil
+	}
+	f.articles[in.URL] = &domain.Article{
+		ArticleID: in.ArticleID, URL: in.URL, MD5URL: in.MD5URL,
+		Title: in.Title, FinalDecision: in.FinalDecision,
+		ReaderTags: in.ReaderTags, ReaderPayloadPendingAt: &now, Version: 1,
+	}
+	return 1, nil
 }
 
 func (f *fakeRepo) GetArticleByURL(_ context.Context, url string) (*domain.Article, error) {
@@ -112,15 +116,18 @@ func b64(url string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(url))
 }
 
-func TestPostArticle_Success(t *testing.T) {
+func TestPostArticle_Insert_Success(t *testing.T) {
 	repo := newFakeRepo()
-	// Seed the article (row created by ITW cron before itw-crud is called).
-	repo.seedArticle("https://example.com/foo")
 	srv := newTestServerWithRepo(repo)
 	defer srv.Close()
-	body, _ := json.Marshal(domain.SetReaderPayloadInput{
-		URL:        "https://example.com/foo",
-		ReaderTags: []string{"axis:ai", "source:rss", "veille-validee"},
+	body, _ := json.Marshal(domain.UpsertArticleInput{
+		URL:           "https://example.com/new",
+		MD5URL:        "aabbcc",
+		ArticleID:     "art-001",
+		RunID:         "run-001",
+		Title:         "New Article",
+		FinalDecision: "accepted",
+		ReaderTags:    []string{"axis:ai", "source:rss", "veille-validee"},
 	})
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/articles", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer token-1")
@@ -133,18 +140,25 @@ func TestPostArticle_Success(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
-	if etag := resp.Header.Get("ETag"); etag != `"2"` {
-		t.Errorf("etag=%q, want \"2\"", etag)
+	if etag := resp.Header.Get("ETag"); etag != `"1"` {
+		t.Errorf("etag=%q, want \"1\"", etag)
 	}
 }
 
-func TestPostArticle_NotFound_Returns404(t *testing.T) {
+func TestPostArticle_Update_Success(t *testing.T) {
 	repo := newFakeRepo()
+	// Pre-seed an existing article.
+	repo.seedArticle("https://example.com/existing")
 	srv := newTestServerWithRepo(repo)
 	defer srv.Close()
-	body, _ := json.Marshal(domain.SetReaderPayloadInput{
-		URL:        "https://example.com/unknown",
-		ReaderTags: []string{"veille-validee"},
+	body, _ := json.Marshal(domain.UpsertArticleInput{
+		URL:           "https://example.com/existing",
+		MD5URL:        "aabbcc",
+		ArticleID:     "art-002",
+		RunID:         "run-001",
+		Title:         "Updated Title",
+		FinalDecision: "accepted",
+		ReaderTags:    []string{"axis:ai", "source:rss", "veille-validee"},
 	})
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/articles", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer token-1")
@@ -154,8 +168,52 @@ func TestPostArticle_NotFound_Returns404(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status=%d, want 404", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	// Existing article started at version 1, update increments to 2.
+	if etag := resp.Header.Get("ETag"); etag != `"2"` {
+		t.Errorf("etag=%q, want \"2\"", etag)
+	}
+}
+
+func TestPostArticle_MissingURL_Returns400(t *testing.T) {
+	repo := newFakeRepo()
+	srv := newTestServerWithRepo(repo)
+	defer srv.Close()
+	body, _ := json.Marshal(domain.UpsertArticleInput{
+		MD5URL: "aabbcc", ArticleID: "art-001", RunID: "run-001",
+	})
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/articles", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token-1")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status=%d, want 400", resp.StatusCode)
+	}
+}
+
+func TestPostArticle_MissingMD5URL_Returns400(t *testing.T) {
+	repo := newFakeRepo()
+	srv := newTestServerWithRepo(repo)
+	defer srv.Close()
+	body, _ := json.Marshal(domain.UpsertArticleInput{
+		URL: "https://example.com/foo", ArticleID: "art-001", RunID: "run-001",
+	})
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/articles", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token-1")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status=%d, want 400", resp.StatusCode)
 	}
 }
 
