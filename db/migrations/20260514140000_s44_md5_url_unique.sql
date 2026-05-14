@@ -8,10 +8,11 @@
 
 -- migrate:up
 
--- Step 1: delete duplicate rows, keep highest id per md5_url (latest pipeline run).
+-- Step 1: delete duplicate rows, keep highest record_id per md5_url (latest pipeline run).
+-- article_records PK is record_id (bigint sequence), not id.
 DELETE FROM article_records
-WHERE id NOT IN (
-  SELECT MAX(id) FROM article_records GROUP BY md5_url
+WHERE record_id NOT IN (
+  SELECT MAX(record_id) FROM article_records GROUP BY md5_url
 );
 
 -- Step 2: create UNIQUE INDEX now that duplicates are removed.
