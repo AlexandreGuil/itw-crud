@@ -39,6 +39,28 @@ func TestBearerAuth_BadToken_Returns401(t *testing.T) {
 	}
 }
 
+func TestBearerAuth_LocalhostBypass_PassesThrough(t *testing.T) {
+	// Knative queue-proxy forwards from 127.0.0.1 — must bypass Bearer auth (S44 G20).
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mw := bearerAuth(logger, map[string]string{"cron": "secret-1"})
+	var clientID string
+	next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		clientID, _ = r.Context().Value(ctxKeyClient).(string)
+	})
+	handler := mw(next)
+	req := httptest.NewRequest(http.MethodPost, "/articles", nil)
+	req.RemoteAddr = "127.0.0.1:54321" // simulates Knative queue-proxy forwarding
+	// No Authorization header — should still pass through
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("status=%d, want 200 for localhost bypass", rec.Code)
+	}
+	if clientID != "knative-internal" {
+		t.Errorf("clientID=%q, want knative-internal", clientID)
+	}
+}
+
 func TestBearerAuth_ValidToken_PassesThrough(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	mw := bearerAuth(logger, map[string]string{"cron": "secret-1"})
