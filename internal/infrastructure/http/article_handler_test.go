@@ -119,6 +119,14 @@ func (f *fakeRepo) PatchRun(_ context.Context, runID string, _ domain.PatchRunIn
 	return nil
 }
 
+func (f *fakeRepo) DedupCheck(_ context.Context, md5s []string) ([]string, error) {
+	return nil, nil
+}
+
+func (f *fakeRepo) DedupMark(_ context.Context, urls []domain.DedupURL) (int, error) {
+	return len(urls), nil
+}
+
 func (f *fakeRepo) Ping(_ context.Context) error { return f.pingErr }
 
 // md5sum returns hex-encoded MD5 of s — mirrors storage.md5URL for test use.

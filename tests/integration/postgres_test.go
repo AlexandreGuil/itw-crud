@@ -541,6 +541,65 @@ func TestPatchRun_NotFound(t *testing.T) {
 	}
 }
 
+func TestDedupCheck_Empty(t *testing.T) {
+	pool, cleanup := startTestPG(t)
+	defer cleanup()
+	repo := storage.New(pool)
+	ctx := context.Background()
+
+	result, err := repo.DedupCheck(ctx, []string{"abc123", "def456"})
+	if err != nil {
+		t.Fatalf("DedupCheck: %v", err)
+	}
+	if len(result) != 0 {
+		t.Errorf("want empty, got %v", result)
+	}
+}
+
+func TestDedupMark_ThenCheck(t *testing.T) {
+	pool, cleanup := startTestPG(t)
+	defer cleanup()
+	repo := storage.New(pool)
+	ctx := context.Background()
+
+	urls := []domain.DedupURL{
+		{URL: "https://example.com/a", MD5: "md5aaa"},
+		{URL: "https://example.com/b", MD5: "md5bbb"},
+	}
+	count, err := repo.DedupMark(ctx, urls)
+	if err != nil {
+		t.Fatalf("DedupMark: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("count=%d, want 2", count)
+	}
+
+	seen, err := repo.DedupCheck(ctx, []string{"md5aaa", "md5bbb", "md5ccc"})
+	if err != nil {
+		t.Fatalf("DedupCheck after mark: %v", err)
+	}
+	if len(seen) != 2 {
+		t.Errorf("seen=%v, want 2 items", seen)
+	}
+}
+
+func TestDedupMark_Idempotent(t *testing.T) {
+	pool, cleanup := startTestPG(t)
+	defer cleanup()
+	repo := storage.New(pool)
+	ctx := context.Background()
+
+	urls := []domain.DedupURL{{URL: "https://example.com/x", MD5: "md5xxx"}}
+	_, _ = repo.DedupMark(ctx, urls)
+	count, err := repo.DedupMark(ctx, urls)
+	if err != nil {
+		t.Fatalf("DedupMark idempotent: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("count=%d, want 1", count)
+	}
+}
+
 func TestListOrphans_FiltersByPendingNotTranslated(t *testing.T) {
 	pool, cleanup := startTestPG(t)
 	defer cleanup()

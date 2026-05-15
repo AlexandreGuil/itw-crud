@@ -329,6 +329,58 @@ RETURNING run_id
 	return nil
 }
 
+// DedupCheck returns the subset of md5s that are already in dedup_urls.
+func (r *Repository) DedupCheck(ctx context.Context, md5s []string) ([]string, error) {
+	if len(md5s) == 0 {
+		return nil, nil
+	}
+	const q = `SELECT md5_url FROM dedup_urls WHERE md5_url = ANY($1)`
+	rows, err := r.pool.Query(ctx, q, md5s)
+	if err != nil {
+		return nil, fmt.Errorf("dedup check: %w", err)
+	}
+	defer rows.Close()
+
+	var seen []string
+	for rows.Next() {
+		var m string
+		if err := rows.Scan(&m); err != nil {
+			return nil, fmt.Errorf("dedup check scan: %w", err)
+		}
+		seen = append(seen, m)
+	}
+	return seen, rows.Err()
+}
+
+// DedupMark upserts a batch of URL+md5 pairs into dedup_urls.
+// Returns the number of rows inserted or updated.
+func (r *Repository) DedupMark(ctx context.Context, urls []domain.DedupURL) (int, error) {
+	if len(urls) == 0 {
+		return 0, nil
+	}
+
+	batch := &pgx.Batch{}
+	const q = `
+INSERT INTO dedup_urls (md5_url, url, first_seen_at, last_seen_at)
+VALUES ($1, $2, NOW(), NOW())
+ON CONFLICT (md5_url) DO UPDATE SET last_seen_at = NOW()
+`
+	for _, u := range urls {
+		batch.Queue(q, u.MD5, u.URL)
+	}
+	results := r.pool.SendBatch(ctx, batch)
+	defer results.Close()
+
+	count := 0
+	for range urls {
+		if _, err := results.Exec(); err != nil {
+			return count, fmt.Errorf("dedup mark batch: %w", err)
+		}
+		count++
+	}
+	return count, nil
+}
+
 // ListOrphans returns URLs of articles where reader_payload_pending_at IS NOT NULL,
 // translated_at IS NULL, and the pending timestamp is older than olderThan.
 // Pass 0 to return all pending-not-translated regardless of age.

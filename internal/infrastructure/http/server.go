@@ -23,6 +23,8 @@ type Repository interface {
 	ListOrphans(ctx context.Context, olderThan time.Duration) ([]string, error)
 	CreateRun(ctx context.Context, in domain.CreateRunInput) (*domain.PipelineRun, error)
 	PatchRun(ctx context.Context, runID string, in domain.PatchRunInput) error
+	DedupCheck(ctx context.Context, md5s []string) ([]string, error)
+	DedupMark(ctx context.Context, urls []domain.DedupURL) (int, error)
 	Ping(ctx context.Context) error
 }
 
@@ -82,6 +84,8 @@ func NewServer(cfg ServerConfig) *Server {
 		r.Patch("/translation-state/{url_b64}", s.handlePatchTranslationState) // backward compat
 		r.Post("/runs", s.handleCreateRun)
 		r.Patch("/runs/{run_id}", s.handlePatchRun)
+		r.Post("/dedup/check", s.handleDedupCheck)
+		r.Post("/dedup/mark", s.handleDedupMark)
 	})
 
 	s.handler = r
