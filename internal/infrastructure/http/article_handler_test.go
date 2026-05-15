@@ -104,6 +104,21 @@ func (f *fakeRepo) ListOrphans(_ context.Context, _ time.Duration) ([]string, er
 	return f.orphans, nil
 }
 
+func (f *fakeRepo) CreateRun(_ context.Context, in domain.CreateRunInput) (*domain.PipelineRun, error) {
+	now := time.Now()
+	if in.StartedAt != nil {
+		now = *in.StartedAt
+	}
+	return &domain.PipelineRun{RunID: in.RunID, StartedAt: now}, nil
+}
+
+func (f *fakeRepo) PatchRun(_ context.Context, runID string, _ domain.PatchRunInput) error {
+	if runID == "nonexistent" {
+		return storage.ErrNotFound
+	}
+	return nil
+}
+
 func (f *fakeRepo) Ping(_ context.Context) error { return f.pingErr }
 
 // md5sum returns hex-encoded MD5 of s — mirrors storage.md5URL for test use.

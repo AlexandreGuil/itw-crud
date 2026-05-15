@@ -275,6 +275,60 @@ RETURNING version
 	return nil
 }
 
+// CreateRun inserts a pipeline_runs row. Idempotent via ON CONFLICT (run_id) DO NOTHING.
+// Returns the run row (fetches it back if conflict).
+func (r *Repository) CreateRun(ctx context.Context, in domain.CreateRunInput) (*domain.PipelineRun, error) {
+	mode := in.Mode
+	if mode == "" {
+		mode = "normal"
+	}
+	const q = `
+INSERT INTO pipeline_runs (run_id, started_at, source_type, mode)
+VALUES ($1, COALESCE($2, NOW()), $3, $4)
+ON CONFLICT (run_id) DO NOTHING
+RETURNING run_id, started_at
+`
+	var run domain.PipelineRun
+	err := r.pool.QueryRow(ctx, q, in.RunID, in.StartedAt, in.SourceType, mode).Scan(
+		&run.RunID, &run.StartedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Conflict — row already existed, fetch it
+		const qGet = `SELECT run_id, started_at FROM pipeline_runs WHERE run_id = $1`
+		err2 := r.pool.QueryRow(ctx, qGet, in.RunID).Scan(&run.RunID, &run.StartedAt)
+		if err2 != nil {
+			return nil, fmt.Errorf("create run (fetch existing): %w", err2)
+		}
+		return &run, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("create run: %w", err)
+	}
+	return &run, nil
+}
+
+// PatchRun updates finished_at and/or articles_count on pipeline_runs.
+// Returns ErrNotFound if run_id does not exist.
+func (r *Repository) PatchRun(ctx context.Context, runID string, in domain.PatchRunInput) error {
+	const q = `
+UPDATE pipeline_runs
+SET
+  finished_at    = COALESCE($1, finished_at),
+  articles_count = COALESCE($2, articles_count)
+WHERE run_id = $3
+RETURNING run_id
+`
+	var id string
+	err := r.pool.QueryRow(ctx, q, in.FinishedAt, in.ArticlesCount, runID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("patch run: %w", err)
+	}
+	return nil
+}
+
 // ListOrphans returns URLs of articles where reader_payload_pending_at IS NOT NULL,
 // translated_at IS NULL, and the pending timestamp is older than olderThan.
 // Pass 0 to return all pending-not-translated regardless of age.

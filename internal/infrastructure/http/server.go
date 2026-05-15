@@ -21,6 +21,8 @@ type Repository interface {
 	PatchTranslationState(ctx context.Context, url string, ifMatch int, in domain.PatchTranslationStateInput) (newVersion int, err error)
 	WriteTranslationState(ctx context.Context, in domain.TranslationResponseInput) error
 	ListOrphans(ctx context.Context, olderThan time.Duration) ([]string, error)
+	CreateRun(ctx context.Context, in domain.CreateRunInput) (*domain.PipelineRun, error)
+	PatchRun(ctx context.Context, runID string, in domain.PatchRunInput) error
 	Ping(ctx context.Context) error
 }
 
@@ -78,6 +80,8 @@ func NewServer(cfg ServerConfig) *Server {
 		r.Get("/articles/{url_b64}", s.handleGetArticle)
 		r.Post("/translation-state", s.handleWriteTranslationState)            // S44 Phase 2 new endpoint
 		r.Patch("/translation-state/{url_b64}", s.handlePatchTranslationState) // backward compat
+		r.Post("/runs", s.handleCreateRun)
+		r.Patch("/runs/{run_id}", s.handlePatchRun)
 	})
 
 	s.handler = r

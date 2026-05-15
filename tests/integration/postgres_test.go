@@ -57,10 +57,15 @@ func startTestPG(t *testing.T) (*pgxpool.Pool, func()) {
 
 	// Bootstrap article_records table matching actual prod schema (relevant columns).
 	// Includes S44 columns: source_url + axes.
+	// pipeline_runs includes S43-bis columns: source_type, mode, finished_at, articles_count.
 	bootstrapSQL := `
 CREATE TABLE IF NOT EXISTS pipeline_runs (
-  run_id TEXT PRIMARY KEY,
-  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  run_id         TEXT        PRIMARY KEY,
+  started_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at    TIMESTAMPTZ,
+  source_type    TEXT        NOT NULL DEFAULT '',
+  mode           TEXT        NOT NULL DEFAULT 'normal',
+  articles_count INT
 );
 
 INSERT INTO pipeline_runs (run_id) VALUES ('test-run-1');
@@ -459,6 +464,78 @@ func TestGetArticleByMD5_NotFound(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := repo.GetArticleByMD5(ctx, "deadbeef00000000000000000000000000")
+	if !errors.Is(err, storage.ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestCreateRun_Inserts(t *testing.T) {
+	pool, cleanup := startTestPG(t)
+	defer cleanup()
+	repo := storage.New(pool)
+	ctx := context.Background()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	in := domain.CreateRunInput{
+		RunID:      "run-test-001",
+		StartedAt:  &now,
+		SourceType: "rss",
+		Mode:       "normal",
+	}
+	run, err := repo.CreateRun(ctx, in)
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if run.RunID != "run-test-001" {
+		t.Errorf("run_id=%q", run.RunID)
+	}
+}
+
+func TestCreateRun_Idempotent(t *testing.T) {
+	pool, cleanup := startTestPG(t)
+	defer cleanup()
+	repo := storage.New(pool)
+	ctx := context.Background()
+
+	in := domain.CreateRunInput{RunID: "run-idem-001", SourceType: "rss", Mode: "normal"}
+	_, err := repo.CreateRun(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Second call must not fail (ON CONFLICT DO NOTHING)
+	_, err = repo.CreateRun(ctx, in)
+	if err != nil {
+		t.Fatalf("CreateRun idempotent: %v", err)
+	}
+}
+
+func TestPatchRun_Updates(t *testing.T) {
+	pool, cleanup := startTestPG(t)
+	defer cleanup()
+	repo := storage.New(pool)
+	ctx := context.Background()
+
+	in := domain.CreateRunInput{RunID: "run-patch-001", SourceType: "rss", Mode: "normal"}
+	_, err := repo.CreateRun(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	count := 14
+	patch := domain.PatchRunInput{ArticlesCount: &count}
+	if err := repo.PatchRun(ctx, "run-patch-001", patch); err != nil {
+		t.Fatalf("PatchRun: %v", err)
+	}
+}
+
+func TestPatchRun_NotFound(t *testing.T) {
+	pool, cleanup := startTestPG(t)
+	defer cleanup()
+	repo := storage.New(pool)
+	ctx := context.Background()
+
+	count := 5
+	err := repo.PatchRun(ctx, "run-nonexistent", domain.PatchRunInput{ArticlesCount: &count})
 	if !errors.Is(err, storage.ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
 	}
