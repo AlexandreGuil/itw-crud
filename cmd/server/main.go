@@ -90,12 +90,14 @@ func run() int {
 		amqpConn, amqpErr := amqppkg.NewConnection(amqpBootstrapCtx, amqppkg.Config{URL: amqpURL}, logger)
 		amqpBootstrapCancel()
 		if amqpErr != nil {
-			logger.Error("amqp connect", "error", amqpErr)
-			return 1
+			// Non-fatal: log warning, start without AMQP publisher.
+			// Push-ready triggers will be skipped; orphan sweeper (S44) recovers missed pushes.
+			logger.Warn("amqp connect failed — starting without push-ready trigger", "error", amqpErr)
+		} else {
+			defer amqpConn.Close()
+			publisher = amqppkg.NewPublisher(amqpConn, logger)
+			logger.Info("amqp publisher ready")
 		}
-		defer amqpConn.Close()
-		publisher = amqppkg.NewPublisher(amqpConn, logger)
-		logger.Info("amqp publisher ready")
 	}
 
 	srv := httpsrv.NewServer(httpsrv.ServerConfig{
