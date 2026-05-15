@@ -369,7 +369,9 @@ ON CONFLICT (md5_url) DO UPDATE SET last_seen_at = NOW()
 		batch.Queue(q, u.MD5, u.URL)
 	}
 	results := r.pool.SendBatch(ctx, batch)
-	defer results.Close()
+	defer func() {
+		_ = results.Close()
+	}()
 
 	count := 0
 	for range urls {

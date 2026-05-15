@@ -119,7 +119,7 @@ func (f *fakeRepo) PatchRun(_ context.Context, runID string, _ domain.PatchRunIn
 	return nil
 }
 
-func (f *fakeRepo) DedupCheck(_ context.Context, md5s []string) ([]string, error) {
+func (f *fakeRepo) DedupCheck(_ context.Context, _ []string) ([]string, error) {
 	return nil, nil
 }
 
@@ -127,11 +127,11 @@ func (f *fakeRepo) DedupMark(_ context.Context, urls []domain.DedupURL) (int, er
 	return len(urls), nil
 }
 
-func (f *fakeRepo) GetSyncState(_ context.Context, key string) (*domain.SyncState, error) {
+func (f *fakeRepo) GetSyncState(_ context.Context, _ string) (*domain.SyncState, error) {
 	return nil, storage.ErrNotFound
 }
 
-func (f *fakeRepo) SetSyncState(_ context.Context, key, value string) error {
+func (f *fakeRepo) SetSyncState(_ context.Context, _, _ string) error {
 	return nil
 }
 
