@@ -381,6 +381,37 @@ ON CONFLICT (md5_url) DO UPDATE SET last_seen_at = NOW()
 	return count, nil
 }
 
+// GetSyncState fetches a single key-value pair from sync_state.
+// Returns ErrNotFound if the key does not exist.
+func (r *Repository) GetSyncState(ctx context.Context, key string) (*domain.SyncState, error) {
+	const q = `SELECT state_key, state_value, updated_at FROM sync_state WHERE state_key = $1`
+	var s domain.SyncState
+	err := r.pool.QueryRow(ctx, q, key).Scan(&s.Key, &s.Value, &s.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get sync state: %w", err)
+	}
+	return &s, nil
+}
+
+// SetSyncState upserts a key-value pair in sync_state.
+func (r *Repository) SetSyncState(ctx context.Context, key, value string) error {
+	const q = `
+INSERT INTO sync_state (state_key, state_value, updated_at)
+VALUES ($1, $2, NOW())
+ON CONFLICT (state_key) DO UPDATE SET
+  state_value = EXCLUDED.state_value,
+  updated_at  = NOW()
+`
+	_, err := r.pool.Exec(ctx, q, key, value)
+	if err != nil {
+		return fmt.Errorf("set sync state: %w", err)
+	}
+	return nil
+}
+
 // ListOrphans returns URLs of articles where reader_payload_pending_at IS NOT NULL,
 // translated_at IS NULL, and the pending timestamp is older than olderThan.
 // Pass 0 to return all pending-not-translated regardless of age.

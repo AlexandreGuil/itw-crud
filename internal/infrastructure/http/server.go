@@ -25,6 +25,8 @@ type Repository interface {
 	PatchRun(ctx context.Context, runID string, in domain.PatchRunInput) error
 	DedupCheck(ctx context.Context, md5s []string) ([]string, error)
 	DedupMark(ctx context.Context, urls []domain.DedupURL) (int, error)
+	GetSyncState(ctx context.Context, key string) (*domain.SyncState, error)
+	SetSyncState(ctx context.Context, key, value string) error
 	Ping(ctx context.Context) error
 }
 
@@ -86,6 +88,8 @@ func NewServer(cfg ServerConfig) *Server {
 		r.Patch("/runs/{run_id}", s.handlePatchRun)
 		r.Post("/dedup/check", s.handleDedupCheck)
 		r.Post("/dedup/mark", s.handleDedupMark)
+		r.Get("/sync-state/{key}", s.handleGetSyncState)
+		r.Put("/sync-state/{key}", s.handlePutSyncState)
 	})
 
 	s.handler = r

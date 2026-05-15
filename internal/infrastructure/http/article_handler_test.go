@@ -127,6 +127,14 @@ func (f *fakeRepo) DedupMark(_ context.Context, urls []domain.DedupURL) (int, er
 	return len(urls), nil
 }
 
+func (f *fakeRepo) GetSyncState(_ context.Context, key string) (*domain.SyncState, error) {
+	return nil, storage.ErrNotFound
+}
+
+func (f *fakeRepo) SetSyncState(_ context.Context, key, value string) error {
+	return nil
+}
+
 func (f *fakeRepo) Ping(_ context.Context) error { return f.pingErr }
 
 // md5sum returns hex-encoded MD5 of s — mirrors storage.md5URL for test use.

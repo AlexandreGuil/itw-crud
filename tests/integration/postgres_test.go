@@ -600,6 +600,56 @@ func TestDedupMark_Idempotent(t *testing.T) {
 	}
 }
 
+func TestSyncStateGet_NotFound(t *testing.T) {
+	pool, cleanup := startTestPG(t)
+	defer cleanup()
+	repo := storage.New(pool)
+	ctx := context.Background()
+
+	_, err := repo.GetSyncState(ctx, "last_sync_at")
+	if !errors.Is(err, storage.ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestSyncStatePut_ThenGet(t *testing.T) {
+	pool, cleanup := startTestPG(t)
+	defer cleanup()
+	repo := storage.New(pool)
+	ctx := context.Background()
+
+	if err := repo.SetSyncState(ctx, "last_sync_at", "2026-05-15T04:11:00Z"); err != nil {
+		t.Fatalf("SetSyncState: %v", err)
+	}
+
+	s, err := repo.GetSyncState(ctx, "last_sync_at")
+	if err != nil {
+		t.Fatalf("GetSyncState: %v", err)
+	}
+	if s.Value != "2026-05-15T04:11:00Z" {
+		t.Errorf("value=%q", s.Value)
+	}
+	if s.Key != "last_sync_at" {
+		t.Errorf("key=%q", s.Key)
+	}
+}
+
+func TestSyncStatePut_Idempotent(t *testing.T) {
+	pool, cleanup := startTestPG(t)
+	defer cleanup()
+	repo := storage.New(pool)
+	ctx := context.Background()
+
+	_ = repo.SetSyncState(ctx, "cursor", "v1")
+	if err := repo.SetSyncState(ctx, "cursor", "v2"); err != nil {
+		t.Fatalf("SetSyncState overwrite: %v", err)
+	}
+	s, _ := repo.GetSyncState(ctx, "cursor")
+	if s.Value != "v2" {
+		t.Errorf("value=%q, want v2", s.Value)
+	}
+}
+
 func TestListOrphans_FiltersByPendingNotTranslated(t *testing.T) {
 	pool, cleanup := startTestPG(t)
 	defer cleanup()
