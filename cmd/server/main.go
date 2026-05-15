@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	amqppkg "github.com/AlexandreGuil/itw-crud/internal/infrastructure/amqp"
 	httpsrv "github.com/AlexandreGuil/itw-crud/internal/infrastructure/http"
 	"github.com/AlexandreGuil/itw-crud/internal/infrastructure/observability"
 	"github.com/AlexandreGuil/itw-crud/internal/infrastructure/storage"
@@ -82,12 +83,28 @@ func run() int {
 	repo := storage.New(pool)
 	metrics := observability.NewMetrics()
 
+	// Optional AMQP publisher — skipped if AMQP_URL is empty (local dev / CI).
+	var publisher httpsrv.Publisher
+	if amqpURL := os.Getenv("AMQP_URL"); amqpURL != "" {
+		amqpBootstrapCtx, amqpBootstrapCancel := context.WithTimeout(ctx, 10*time.Second)
+		amqpConn, amqpErr := amqppkg.NewConnection(amqpBootstrapCtx, amqppkg.Config{URL: amqpURL}, logger)
+		amqpBootstrapCancel()
+		if amqpErr != nil {
+			logger.Error("amqp connect", "error", amqpErr)
+			return 1
+		}
+		defer amqpConn.Close()
+		publisher = amqppkg.NewPublisher(amqpConn, logger)
+		logger.Info("amqp publisher ready")
+	}
+
 	srv := httpsrv.NewServer(httpsrv.ServerConfig{
 		Port:           port,
 		Logger:         logger,
 		ReadinessProbe: repo.Ping,
 		BearerTokens:   tokens,
 		Repo:           repo,
+		Publisher:      publisher,
 		Metrics:        metrics,
 	})
 
