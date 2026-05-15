@@ -112,6 +112,17 @@ func md5sum(s string) string {
 	return hex.EncodeToString(h[:])
 }
 
+func (f *fakeRepo) GetArticleByMD5(_ context.Context, md5Hex string) (*domain.Article, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, a := range f.articles {
+		if a.MD5URL == md5Hex {
+			return a, nil
+		}
+	}
+	return nil, storage.ErrNotFound
+}
+
 func (f *fakeRepo) WriteTranslationState(_ context.Context, in domain.TranslationResponseInput) error {
 	if in.RequestID == "" {
 		return errors.New("invalid request_id")
@@ -489,5 +500,50 @@ func TestPostTranslationState_SkippedStatus_Returns204(t *testing.T) {
 	// skipped_french is no-op but still 204 — not an error
 	if resp.StatusCode != http.StatusNoContent {
 		t.Errorf("status=%d, want 204", resp.StatusCode)
+	}
+}
+
+func TestGetArticleByMD5Handler_OK(t *testing.T) {
+	repo := newFakeRepo()
+	testURL := "https://example.com/md5test"
+	testMD5 := md5sum(testURL)
+	repo.articles[testURL] = &domain.Article{
+		URL:     testURL,
+		MD5URL:  testMD5,
+		Title:   "Test Title",
+		Version: 1,
+	}
+	srv := newTestServerWithRepo(repo)
+	defer srv.Close()
+
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/articles/by-md5/"+testMD5, nil)
+	req.Header.Set("Authorization", "Bearer token-1")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status=%d body=%s", resp.StatusCode, resp.Body)
+	}
+	var got domain.Article
+	_ = json.NewDecoder(resp.Body).Decode(&got)
+	if got.URL != testURL {
+		t.Errorf("url=%q, want %q", got.URL, testURL)
+	}
+}
+
+func TestGetArticleByMD5Handler_NotFound(t *testing.T) {
+	srv := newTestServerWithRepo(newFakeRepo())
+	defer srv.Close()
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/articles/by-md5/deadbeef", nil)
+	req.Header.Set("Authorization", "Bearer token-1")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status=%d, want 404", resp.StatusCode)
 	}
 }

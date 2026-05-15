@@ -17,6 +17,7 @@ import (
 type Repository interface {
 	UpsertArticle(ctx context.Context, in domain.UpsertArticleInput) (version int, err error)
 	GetArticleByURL(ctx context.Context, url string) (*domain.Article, error)
+	GetArticleByMD5(ctx context.Context, md5Hex string) (*domain.Article, error)
 	PatchTranslationState(ctx context.Context, url string, ifMatch int, in domain.PatchTranslationStateInput) (newVersion int, err error)
 	WriteTranslationState(ctx context.Context, in domain.TranslationResponseInput) error
 	ListOrphans(ctx context.Context, olderThan time.Duration) ([]string, error)
@@ -64,6 +65,7 @@ func NewServer(cfg ServerConfig) *Server {
 		r.Use(bearerAuth(cfg.Logger, cfg.BearerTokens))
 		r.Post("/articles", s.handleUpsertArticle)
 		r.Get("/articles/orphans", s.handleListOrphans)
+		r.Get("/articles/by-md5/{md5_url_hex}", s.handleGetArticleByMD5)
 		r.Get("/articles/{url_b64}", s.handleGetArticle)
 		r.Post("/translation-state", s.handleWriteTranslationState)            // S44 Phase 2 new endpoint
 		r.Patch("/translation-state/{url_b64}", s.handlePatchTranslationState) // backward compat

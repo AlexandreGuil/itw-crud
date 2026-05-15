@@ -123,6 +123,42 @@ LIMIT 1
 	return &a, nil
 }
 
+// GetArticleByMD5 fetches a single article by its md5_url hex string.
+// Used by reader-pusher to resolve a push trigger to the full article payload.
+// Returns ErrNotFound if absent.
+func (r *Repository) GetArticleByMD5(ctx context.Context, md5Hex string) (*domain.Article, error) {
+	const q = `
+SELECT
+  article_id, url, md5_url,
+  COALESCE(title, ''), COALESCE(final_decision, ''),
+  final_score, ingested_at, tags, source, content, summary,
+  title_fr, summary_fr, translation_model,
+  translation_tokens_input, translation_tokens_output, translation_duration_ms,
+  translated_at, readwise_id, reader_pushed_at,
+  reader_payload_pending_at, COALESCE(reader_tags, '{}'), version
+FROM article_records
+WHERE md5_url = $1
+LIMIT 1
+`
+	var a domain.Article
+	err := r.pool.QueryRow(ctx, q, md5Hex).Scan(
+		&a.ArticleID, &a.URL, &a.MD5URL,
+		&a.Title, &a.FinalDecision,
+		&a.FinalScore, &a.IngestedAt, &a.Tags, &a.Source, &a.Content, &a.Summary,
+		&a.TitleFR, &a.SummaryFR, &a.TranslationModel,
+		&a.TranslationTokensIn, &a.TranslationTokensOut, &a.TranslationDurationMs,
+		&a.TranslatedAt, &a.ReadwiseID, &a.ReaderPushedAt,
+		&a.ReaderPayloadPendingAt, &a.ReaderTags, &a.Version,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get article by md5: %w", err)
+	}
+	return &a, nil
+}
+
 // PatchTranslationState applies a column-level UPDATE on translation fields.
 // ifMatchVersion must equal the current version; otherwise ErrVersionMismatch is returned.
 // Returns the incremented version on success.

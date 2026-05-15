@@ -400,6 +400,47 @@ func TestWriteTranslationState_SkipsIfStatusNotOk(t *testing.T) {
 	}
 }
 
+func TestGetArticleByMD5_Found(t *testing.T) {
+	pool, cleanup := startTestPG(t)
+	defer cleanup()
+	repo := storage.New(pool)
+	ctx := context.Background()
+
+	url := "https://example.com/by-md5"
+	md5 := md5URL(url)
+	_, err := repo.UpsertArticle(ctx, domain.UpsertArticleInput{
+		URL: url, MD5URL: md5, ArticleID: "art-md5-001", RunID: "test-run-1",
+		Title: "Hello", FinalDecision: "accepted",
+		Axes: []string{}, ReaderTags: []string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.GetArticleByMD5(ctx, md5)
+	if err != nil {
+		t.Fatalf("GetArticleByMD5: %v", err)
+	}
+	if got.URL != url {
+		t.Errorf("url=%q want %q", got.URL, url)
+	}
+	if got.MD5URL != md5 {
+		t.Errorf("md5_url mismatch")
+	}
+}
+
+func TestGetArticleByMD5_NotFound(t *testing.T) {
+	pool, cleanup := startTestPG(t)
+	defer cleanup()
+	repo := storage.New(pool)
+	ctx := context.Background()
+
+	_, err := repo.GetArticleByMD5(ctx, "deadbeef00000000000000000000000000")
+	if !errors.Is(err, storage.ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
 func TestListOrphans_FiltersByPendingNotTranslated(t *testing.T) {
 	pool, cleanup := startTestPG(t)
 	defer cleanup()
