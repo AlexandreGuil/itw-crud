@@ -132,6 +132,29 @@ ALTER TABLE article_records
 		t.Fatal(err)
 	}
 
+	// Apply S43-bis migrations — dedup_urls + sync_state tables.
+	migrationS43Bis := `
+CREATE TABLE IF NOT EXISTS dedup_urls (
+  md5_url       TEXT        NOT NULL PRIMARY KEY,
+  url           TEXT        NOT NULL,
+  first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_dedup_urls_last_seen ON dedup_urls(last_seen_at DESC);
+
+CREATE TABLE IF NOT EXISTS sync_state (
+  state_key   TEXT        NOT NULL PRIMARY KEY,
+  state_value TEXT        NOT NULL,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+`
+	if _, err := pool.Exec(ctx, migrationS43Bis); err != nil {
+		pool.Close()
+		cleanup()
+		t.Fatal(err)
+	}
+
 	return pool, func() { pool.Close(); cleanup() }
 }
 
