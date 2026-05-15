@@ -24,14 +24,21 @@ type Repository interface {
 	Ping(ctx context.Context) error
 }
 
+// Publisher is the port for async AMQP publish (push-ready trigger after translation state write).
+// nil = no-op when AMQP_URL not set (local dev / CI).
+type Publisher interface {
+	Publish(ctx context.Context, exchange, routingKey string, body []byte, headers map[string]any) error
+}
+
 type Server struct {
-	server  *http.Server
-	handler http.Handler
-	logger  *slog.Logger
-	readyFn func(context.Context) error
-	repo    Repository
-	tokens  map[string]string
-	metrics *observability.Metrics
+	server    *http.Server
+	handler   http.Handler
+	logger    *slog.Logger
+	readyFn   func(context.Context) error
+	repo      Repository
+	publisher Publisher
+	tokens    map[string]string
+	metrics   *observability.Metrics
 }
 
 type ServerConfig struct {
@@ -40,17 +47,19 @@ type ServerConfig struct {
 	ReadinessProbe    func(context.Context) error
 	BearerTokens      map[string]string
 	Repo              Repository
+	Publisher         Publisher
 	ReadHeaderTimeout time.Duration
 	Metrics           *observability.Metrics
 }
 
 func NewServer(cfg ServerConfig) *Server {
 	s := &Server{
-		logger:  cfg.Logger,
-		readyFn: cfg.ReadinessProbe,
-		repo:    cfg.Repo,
-		tokens:  cfg.BearerTokens,
-		metrics: cfg.Metrics,
+		logger:    cfg.Logger,
+		readyFn:   cfg.ReadinessProbe,
+		repo:      cfg.Repo,
+		publisher: cfg.Publisher,
+		tokens:    cfg.BearerTokens,
+		metrics:   cfg.Metrics,
 	}
 
 	r := chi.NewRouter()
@@ -88,5 +97,6 @@ func NewServer(cfg ServerConfig) *Server {
 	return s
 }
 
+func (s *Server) Handler() http.Handler               { return s.handler }
 func (s *Server) ListenAndServe() error              { return s.server.ListenAndServe() }
 func (s *Server) Shutdown(ctx context.Context) error { return s.server.Shutdown(ctx) }

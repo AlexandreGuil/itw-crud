@@ -48,7 +48,36 @@ func (s *Server) handleWriteTranslationState(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// S45 — publish push-ready trigger so reader-pusher is triggered AFTER
+	// translation state is persisted in PG (sequential guarantee, no race condition).
+	// Only on status="ok"; skipped/failed translations don't need a Reader push.
+	if s.publisher != nil && in.Status == "ok" {
+		source := parseSource(in.RequestID)
+		routingKey := source + ".article.push-ready"
+		triggerBody := []byte(`{"request_id":"` + in.RequestID + `"}`)
+		if pubErr := s.publisher.Publish(
+			r.Context(),
+			"itw.articles",
+			routingKey,
+			triggerBody,
+			map[string]any{"content-type": "application/json"},
+		); pubErr != nil {
+			// Non-fatal: log warning, don't fail the HTTP response.
+			// reader-pusher can recover via orphan sweeper if needed.
+			s.logger.Warn("amqp push trigger failed", "error", pubErr, "request_id", in.RequestID)
+		}
+	}
+
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// parseSource extracts the source prefix from a request_id "<source>:<md5>".
+func parseSource(requestID string) string {
+	idx := strings.IndexByte(requestID, ':')
+	if idx < 0 {
+		return "unknown"
+	}
+	return requestID[:idx]
 }
 
 func (s *Server) handlePatchTranslationState(w http.ResponseWriter, r *http.Request) {

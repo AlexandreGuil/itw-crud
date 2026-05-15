@@ -547,3 +547,96 @@ func TestGetArticleByMD5Handler_NotFound(t *testing.T) {
 		t.Errorf("status=%d, want 404", resp.StatusCode)
 	}
 }
+
+// --- AMQP publisher tests (S45 T2) ---
+
+type fakePublisher struct {
+	published []struct {
+		exchange, routingKey string
+		body                 []byte
+	}
+	err error
+}
+
+func (f *fakePublisher) Publish(_ context.Context, exchange, routingKey string, body []byte, _ map[string]any) error {
+	f.published = append(f.published, struct {
+		exchange, routingKey string
+		body                 []byte
+	}{exchange, routingKey, body})
+	return f.err
+}
+
+const testToken = "token-1"
+
+func newTestServerWithPublisher(repo Repository, pub Publisher) *Server {
+	return NewServer(ServerConfig{
+		Port:         0,
+		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Repo:         repo,
+		Publisher:    pub,
+		BearerTokens: map[string]string{"test-client": testToken},
+	})
+}
+
+// md5hex is an alias for md5sum — used in the AMQP publisher tests.
+func md5hex(s string) string { return md5sum(s) }
+
+func TestWriteTranslationState_PublishesTrigger_WhenStatusOK(t *testing.T) {
+	repo := newFakeRepo()
+	url := "https://example.com/trigger-test"
+	testMD5 := md5hex(url)
+	repo.articles[url] = &domain.Article{URL: url, MD5URL: testMD5, Version: 1}
+
+	pub := &fakePublisher{}
+	srv := newTestServerWithPublisher(repo, pub)
+
+	body, _ := json.Marshal(domain.TranslationResponseInput{
+		RequestID: "itw-tech:" + testMD5,
+		Status:    "ok",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/translation-state", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Errorf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if len(pub.published) != 1 {
+		t.Fatalf("want 1 publish, got %d", len(pub.published))
+	}
+	if pub.published[0].exchange != "itw.articles" {
+		t.Errorf("exchange=%q want itw.articles", pub.published[0].exchange)
+	}
+	if pub.published[0].routingKey != "itw-tech.article.push-ready" {
+		t.Errorf("routing_key=%q want itw-tech.article.push-ready", pub.published[0].routingKey)
+	}
+}
+
+func TestWriteTranslationState_NoPublish_WhenStatusSkipped(t *testing.T) {
+	repo := newFakeRepo()
+	url := "https://example.com/skip-test"
+	testMD5 := md5hex(url)
+	repo.articles[url] = &domain.Article{URL: url, MD5URL: testMD5, Version: 1}
+
+	pub := &fakePublisher{}
+	srv := newTestServerWithPublisher(repo, pub)
+
+	body, _ := json.Marshal(domain.TranslationResponseInput{
+		RequestID: "itw-tech:" + testMD5,
+		Status:    "skipped_french",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/translation-state", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Errorf("status=%d", w.Code)
+	}
+	if len(pub.published) != 0 {
+		t.Errorf("want 0 publishes for skipped, got %d", len(pub.published))
+	}
+}
