@@ -97,6 +97,6 @@ func NewServer(cfg ServerConfig) *Server {
 	return s
 }
 
-func (s *Server) Handler() http.Handler               { return s.handler }
+func (s *Server) Handler() http.Handler              { return s.handler }
 func (s *Server) ListenAndServe() error              { return s.server.ListenAndServe() }
 func (s *Server) Shutdown(ctx context.Context) error { return s.server.Shutdown(ctx) }
